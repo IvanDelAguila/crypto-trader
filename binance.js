@@ -29,9 +29,24 @@ function get(host, path) {
  * Precios 24h de múltiples símbolos
  */
 async function get24hrTicker(symbols) {
-  const list    = symbols.map(s => `"${s}"`).join(",");
-  const encoded = encodeURIComponent(`[${list}]`);
-  const data    = await get(BASE_URL, `/api/v3/ticker/24hr?symbols=${encoded}`);
+  const result = {};
+  const promises = symbols.map(async (symbol) => {
+    try {
+      const data = await get(BASE_URL, `/api/v3/ticker/24hr?symbol=${symbol}`);
+      if (data && data.lastPrice) {
+        result[symbol] = {
+          price:       parseFloat(data.lastPrice),
+          change24h:   parseFloat(data.priceChangePercent),
+          high24h:     parseFloat(data.highPrice),
+          low24h:      parseFloat(data.lowPrice),
+          volume24h:   parseFloat(data.volume),
+          quoteVolume: parseFloat(data.quoteVolume),
+        };
+      }
+    } catch {}
+  });
+  await Promise.all(promises);
+  return result;
 
   const result = {};
   for (const item of data) {
