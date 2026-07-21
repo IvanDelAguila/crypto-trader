@@ -1,5 +1,5 @@
 const https = require("https");
-const BASE_URL = "api.binance.com";
+const BASE_URL = "data-api.binance.vision";
 const FAPI_URL = "fapi.binance.com";
 
 function get(host, path) {
