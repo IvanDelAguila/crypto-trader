@@ -1,0 +1,18 @@
+{
+  "name": "crypto-trader-bot",
+  "version": "1.0.0",
+  "description": "Automated crypto paper trading bot with multiple strategies",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "ws": "^8.16.0",
+    "dotenv": "^16.3.1",
+    "chalk": "^4.1.2"
+  }
+}
