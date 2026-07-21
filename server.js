@@ -1,18 +1,18 @@
 // server.js — API REST para el dashboard
 
-const http    = require("http");
-const config  = require("./config");
+const http = require("http");
+const config = require("./config");
 
 class ApiServer {
   constructor(engine, dataStore) {
-    this.engine    = engine;
+    this.engine = engine;
     this.dataStore = dataStore;
-    this.server    = null;
-    this.clients   = new Set(); // SSE clients
+    this.server = null;
+    this.clients = new Set(); // SSE clients
   }
 
   _cors(res) {
-    res.setHeader("Access-Control-Allow-Origin",  "*");
+    res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   }
@@ -49,7 +49,7 @@ class ApiServer {
   }
 
   async handle(req, res) {
-    const url    = req.url.split("?")[0];
+    const url = req.url.split("?")[0];
     const method = req.method;
 
     // OPTIONS preflight
@@ -61,8 +61,8 @@ class ApiServer {
     if (method === "GET" && url === "/api/state") {
       return this._json(res, {
         ...this.engine.getState(),
-        prices:       this.dataStore.prices,
-        changes:      this.dataStore.changes,
+        prices: this.dataStore.prices,
+        changes: this.dataStore.changes,
         fundingRates: this.dataStore.fundingRates,
         priceHistory: this.dataStore.priceHistory,
       });
@@ -71,9 +71,9 @@ class ApiServer {
     // Solo precios
     if (method === "GET" && url === "/api/prices") {
       return this._json(res, {
-        prices:   this.dataStore.prices,
-        changes:  this.dataStore.changes,
-        updated:  this.dataStore.lastUpdate,
+        prices: this.dataStore.prices,
+        changes: this.dataStore.changes,
+        updated: this.dataStore.lastUpdate,
       });
     }
 
@@ -110,10 +110,10 @@ class ApiServer {
     // Health check
     if (method === "GET" && url === "/api/health") {
       return this._json(res, {
-        status:    "ok",
-        uptime:    Math.floor((Date.now() - this.engine.startTime) / 1000),
+        status: "ok",
+        uptime: Math.floor((Date.now() - this.engine.startTime) / 1000),
         positions: this.engine.positions.length,
-        equity:    this.engine.totalEquity.toFixed(2),
+        equity: this.engine.totalEquity.toFixed(2),
         autoTrade: this.engine.autoTrade,
       });
     }
@@ -122,9 +122,9 @@ class ApiServer {
     if (method === "GET" && url === "/api/stream") {
       this._cors(res);
       res.writeHead(200, {
-        "Content-Type":  "text/event-stream",
+        "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
-        "Connection":    "keep-alive",
+        "Connection": "keep-alive",
       });
       res.write(": connected\n\n");
       this.clients.add(res);
@@ -141,14 +141,14 @@ class ApiServer {
         return this._json(res, { error: "Faltan campos requeridos" }, 400);
       }
       const signal = {
-        symbol:     body.symbol,
-        strategy:   body.strategy,
-        type:       body.type,
-        price:      parseFloat(body.price),
+        symbol: body.symbol,
+        strategy: body.strategy,
+        type: body.type,
+        price: parseFloat(body.price),
         confidence: parseFloat(body.confidence) || 75,
-        tp:         parseFloat(body.tp) || parseFloat(body.price) * (body.type === "LONG" ? 1.06 : 0.94),
-        sl:         parseFloat(body.sl) || parseFloat(body.price) * (body.type === "LONG" ? 0.97 : 1.03),
-        reason:     body.reason || "Manual",
+        tp: parseFloat(body.tp) || parseFloat(body.price) * (body.type === "LONG" ? 1.06 : 0.94),
+        sl: parseFloat(body.sl) || parseFloat(body.price) * (body.type === "LONG" ? 0.97 : 1.03),
+        reason: body.reason || "Manual",
       };
       const result = this.engine.openPosition(signal);
       return this._json(res, result, result.success ? 200 : 400);
@@ -156,7 +156,7 @@ class ApiServer {
 
     // Cerrar posición
     if (method === "POST" && url === "/api/close") {
-      const body  = await this._parseBody(req);
+      const body = await this._parseBody(req);
       if (!body.posId) return this._json(res, { error: "posId requerido" }, 400);
       const price = this.dataStore.prices[body.symbol]?.price;
       const result = this.engine.closePosition(body.posId, price, "manual");
@@ -172,11 +172,11 @@ class ApiServer {
 
     // Reset paper trading
     if (method === "POST" && url === "/api/reset") {
-      this.engine.capital   = config.initialCapital;
+      this.engine.capital = config.initialCapital;
       this.engine.positions = [];
-      this.engine.trades    = [];
-      this.engine.signals   = [];
-      this.engine.stats     = this.engine._initStats();
+      this.engine.trades = [];
+      this.engine.signals = [];
+      this.engine.stats = this.engine._initStats();
       this.engine.startTime = new Date();
       return this._json(res, { ok: true, message: "Bot reseteado a $500" });
     }
@@ -193,7 +193,7 @@ class ApiServer {
       });
     });
 
-    this.server.listen(config.port, () => {
+    this.server.listen(config.port, "0.0.0.0", () => {
       console.log(`\n🌐 API corriendo en http://localhost:${config.port}`);
       console.log(`   Dashboard: http://localhost:${config.port}/api/health\n`);
     });
