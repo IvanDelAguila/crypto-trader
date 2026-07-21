@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Crypto Trader Bot</title>
+<style>
+  :root{
+    --bg:#0b0f14; --card:#131a22; --border:#1f2937; --text:#e5e7eb; --muted:#94a3b8;
+    --green:#22c55e; --red:#ef4444;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f4f6f8; --card:#ffffff; --border:#e2e8f0; --text:#0f172a; --muted:#64748b; }
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:16px;padding-bottom:40px;}
+  h1{font-size:1.15rem;margin:0 0 4px;}
+  .sub{color:var(--muted);font-size:0.78rem;}
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:16px 0;}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px;}
+  .label{color:var(--muted);font-size:0.7rem;text-transform:uppercase;letter-spacing:.04em;}
+  .value{font-size:1.35rem;font-weight:600;margin-top:4px;}
+  .pos{color:var(--green);} .neg{color:var(--red);}
+  .badge{display:inline-flex;align-items:center;gap:6px;font-size:0.75rem;padding:4px 10px;border-radius:999px;background:var(--card);border:1px solid var(--border);white-space:nowrap;}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);}
+  .dot.on{background:var(--green);} .dot.off{background:var(--red);}
+  section{margin-bottom:20px;}
+  section h2{font-size:0.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:0 0 8px;}
+  table{width:100%;border-collapse:collapse;font-size:0.8rem;}
+  th,td{text-align:left;padding:6px 4px;border-bottom:1px solid var(--border);}
+  th{color:var(--muted);font-weight:500;}
+  .empty{color:var(--muted);font-size:0.8rem;padding:10px 0;}
+  .toggle{padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:0.8rem;}
+  .row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px;}
+  .item{margin-bottom:8px;}
+  footer{color:var(--muted);font-size:0.7rem;text-align:center;margin-top:20px;}
+</style>
+</head>
+<body>
+  <div class="row">
+    <div>
+      <h1>🤖 Crypto Trader Bot</h1>
+      <div class="sub" id="updated">Cargando…</div>
+    </div>
+    <span class="badge"><span class="dot" id="statusDot"></span><span id="statusText">—</span></span>
+  </div>
+
+  <div class="grid">
+    <div class="card"><div class="label">Equity</div><div class="value" id="equity">—</div></div>
+    <div class="card"><div class="label">Retorno</div><div class="value" id="return">—</div></div>
+    <div class="card"><div class="label">Win rate</div><div class="value" id="winrate">—</div></div>
+    <div class="card"><div class="label">Trades</div><div class="value" id="trades">—</div></div>
+  </div>
+
+  <div class="row">
+    <span class="sub">Auto-trade</span>
+    <button class="toggle" id="autoBtn" onclick="toggleAuto()">—</button>
+  </div>
+
+  <section>
+    <h2>Por estrategia</h2>
+    <table id="byStrategyTable"><thead><tr><th>Estrategia</th><th>Trades</th><th>Win%</th><th>PnL avg</th></tr></thead><tbody></tbody></table>
+  </section>
+
+  <section>
+    <h2>Posiciones abiertas</h2>
+    <div id="positions" class="empty">Sin datos aún</div>
+  </section>
+
+  <section>
+    <h2>Últimos trades</h2>
+    <div id="tradesList" class="empty">Sin datos aún</div>
+  </section>
+
+  <footer>Actualiza cada 5s · Paper trading, sin dinero real</footer>
+
+<script>
+const fmt = (n,d=2) => Number(n).toFixed(d);
+const fmtP = (n) => (n>=0?'+':'') + fmt(n) + '%';
+const cls = (n) => Number(n)>=0 ? 'pos':'neg';
+const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+async function refresh(){
+  try{
+    const [health, stats, positions, trades] = await Promise.all([
+      fetch('/api/health').then(r=>r.json()),
+      fetch('/api/stats').then(r=>r.json()),
+      fetch('/api/positions').then(r=>r.json()),
+      fetch('/api/trades').then(r=>r.json()),
+    ]);
+
+    document.getElementById('updated').textContent = 'Actualizado ' + new Date().toLocaleTimeString();
+    document.getElementById('statusDot').className = 'dot ' + (health.status === 'ok' ? 'on' : 'off');
+    document.getElementById('statusText').textContent = health.status === 'ok' ? 'En línea' : 'Sin conexión';
+
+    document.getElementById('equity').textContent = '$' + fmt(stats.totalEquity);
+    const retEl = document.getElementById('return');
+    retEl.textContent = fmtP(Number(stats.totalReturn));
+    retEl.className = 'value ' + cls(stats.totalReturn);
+    document.getElementById('winrate').textContent = stats.winRate + '%';
+    document.getElementById('trades').textContent = stats.totalTrades + ' (' + stats.openPositions + ' abiertas)';
+
+    const autoBtn = document.getElementById('autoBtn');
+    autoBtn.textContent = health.autoTrade ? '🟢 ON' : '🔴 OFF';
+
+    const tbody = document.querySelector('#byStrategyTable tbody');
+    tbody.innerHTML = '';
+    for (const [name, s] of Object.entries(stats.byStrategy || {})) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${esc(name)}</td><td>${s.trades}</td><td>${s.winRate}%</td><td class="${cls(s.avgPnL)}">${s.avgPnL}%</td>`;
+      tbody.appendChild(tr);
+    }
+
+    const posDiv = document.getElementById('positions');
+    posDiv.innerHTML = !positions.length
+      ? '<div class="empty">Sin posiciones abiertas</div>'
+      : positions.map(p => `
+        <div class="card item">
+          <div class="row" style="margin-bottom:0;">
+            <strong>${esc(p.symbol)} ${esc(p.type)} · ${esc(p.strategy)}</strong>
+            <span class="${cls(p.pnlPct)}">${fmtP(p.pnlPct)}</span>
+          </div>
+          <div class="sub">entry $${fmt(p.entryPrice,4)} → now $${fmt(p.currentPrice ?? p.entryPrice,4)}</div>
+        </div>
+      `).join('');
+
+    const trDiv = document.getElementById('tradesList');
+    trDiv.innerHTML = !trades.length
+      ? '<div class="empty">Sin trades cerrados aún</div>'
+      : trades.slice(0, 20).map(t => `
+        <div class="card item">
+          <div class="row" style="margin-bottom:0;">
+            <strong>${esc(t.symbol)} ${esc(t.type)} · ${esc(t.strategy)}</strong>
+            <span class="${cls(t.closePnlPct)}">${fmtP(t.closePnlPct)}</span>
+          </div>
+          <div class="sub">${esc(t.closeReason)} · ${new Date(t.closeTime).toLocaleTimeString()}</div>
+        </div>
+      `).join('');
+
+  } catch (e) {
+    document.getElementById('statusDot').className = 'dot off';
+    document.getElementById('statusText').textContent = 'Error';
+  }
+}
+
+async function toggleAuto(){
+  const health = await fetch('/api/health').then(r=>r.json());
+  await fetch('/api/auto', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ enabled: !health.autoTrade }) });
+  refresh();
+}
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

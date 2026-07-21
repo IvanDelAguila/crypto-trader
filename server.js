@@ -1,7 +1,11 @@
 // server.js — API REST para el dashboard
 
 const http = require("http");
+const fs   = require("fs");
+const path = require("path");
 const config = require("./config");
+
+const dashboardHtml = fs.readFileSync(path.join(__dirname, "public", "dashboard.html"), "utf8");
 
 class ApiServer {
   constructor(engine, dataStore) {
@@ -56,6 +60,14 @@ class ApiServer {
     if (method === "OPTIONS") { this._cors(res); res.writeHead(204); res.end(); return; }
 
     // ── GET routes ──────────────────────────────────────────────────────────
+
+    // Dashboard HTML
+    if (method === "GET" && url === "/") {
+      this._cors(res);
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(dashboardHtml);
+      return;
+    }
 
     // Estado completo del bot
     if (method === "GET" && url === "/api/state") {
