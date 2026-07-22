@@ -1,141 +1,109 @@
-// db.js — Persistencia SQLite: capital, posiciones abiertas y trades cerrados
-// sobreviven a reinicios/redeploys (siempre que DATA_DIR apunte a un volumen persistente)
+// db.js — Persistencia en archivo JSON: capital, posiciones abiertas y trades cerrados
+// sobreviven a reinicios/redeploys (siempre que DATA_DIR apunte a un volumen persistente).
+//
+// Se usa JSON plano en vez de un driver SQLite nativo para evitar problemas de
+// compilación (node-gyp/Python) en el entorno de build de Railway.
 
-const Database = require("better-sqlite3");
 const path = require("path");
-const fs = require("fs");
+const fs   = require("fs");
 
 const dataDir = process.env.DATA_DIR || __dirname;
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
-const db = new Database(path.join(dataDir, "trading.db"));
-db.pragma("journal_mode = WAL");
+const filePath = path.join(dataDir, "trading.json");
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS state (
-    key   TEXT PRIMARY KEY,
-    value TEXT
-  )
-`);
+function load() {
+  try {
+    const raw = fs.readFileSync(filePath, "utf8");
+    const parsed = JSON.parse(raw);
+    return {
+      state:     parsed.state     || {},
+      positions: parsed.positions || [],
+      trades:    parsed.trades    || [],
+    };
+  } catch (e) {
+    return { state: {}, positions: [], trades: [] };
+  }
+}
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS positions (
-    id           TEXT PRIMARY KEY,
-    symbol       TEXT,
-    strategy     TEXT,
-    type         TEXT,
-    entryPrice   REAL,
-    size         REAL,
-    allocation   REAL,
-    tp           REAL,
-    sl           REAL,
-    confidence   REAL,
-    reason       TEXT,
-    details      TEXT,
-    openTime     TEXT
-  )
-`);
+let data = load();
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS trades (
-    id           TEXT,
-    symbol       TEXT,
-    strategy     TEXT,
-    type         TEXT,
-    entryPrice   REAL,
-    size         REAL,
-    allocation   REAL,
-    tp           REAL,
-    sl           REAL,
-    confidence   REAL,
-    reason       TEXT,
-    details      TEXT,
-    openTime     TEXT,
-    closePrice   REAL,
-    closePnl     REAL,
-    closePnlPct  REAL,
-    closeTime    TEXT,
-    closeReason  TEXT,
-    duration     INTEGER
-  )
-`);
+// Escritura atómica: escribe a un archivo temporal y renombra, para no
+// dejar el archivo corrupto si el proceso muere a mitad de un write.
+function persist() {
+  const tmpPath = filePath + ".tmp";
+  fs.writeFileSync(tmpPath, JSON.stringify(data));
+  fs.renameSync(tmpPath, filePath);
+}
 
 // ── Estado simple clave/valor (capital, autoTrade, etc.) ─────────────────────
 function getState(key, fallback) {
-  const row = db.prepare(`SELECT value FROM state WHERE key = ?`).get(key);
-  return row ? JSON.parse(row.value) : fallback;
+  return key in data.state ? data.state[key] : fallback;
 }
 
 function setState(key, value) {
-  db.prepare(`
-    INSERT INTO state (key, value) VALUES (?, ?)
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value
-  `).run(key, JSON.stringify(value));
+  data.state[key] = value;
+  persist();
 }
 
 // ── Posiciones abiertas ───────────────────────────────────────────────────────
 function insertPosition(p) {
-  db.prepare(`
-    INSERT INTO positions (id, symbol, strategy, type, entryPrice, size, allocation, tp, sl, confidence, reason, details, openTime)
-    VALUES (@id, @symbol, @strategy, @type, @entryPrice, @size, @allocation, @tp, @sl, @confidence, @reason, @details, @openTime)
-  `).run({
+  data.positions.push({
     id: p.id, symbol: p.symbol, strategy: p.strategy, type: p.type,
     entryPrice: p.entryPrice, size: p.size, allocation: p.allocation,
     tp: p.tp, sl: p.sl, confidence: p.confidence, reason: p.reason,
-    details: JSON.stringify(p.details || {}),
+    details: p.details || {},
     openTime: new Date(p.openTime).toISOString(),
   });
+  persist();
 }
 
 function deletePosition(id) {
-  db.prepare(`DELETE FROM positions WHERE id = ?`).run(id);
+  data.positions = data.positions.filter(p => p.id !== id);
+  persist();
 }
 
 function getPositions() {
-  return db.prepare(`SELECT * FROM positions`).all().map(r => ({
-    ...r,
-    details: JSON.parse(r.details || "{}"),
-    openTime: new Date(r.openTime),
+  return data.positions.map(p => ({
+    ...p,
+    openTime: new Date(p.openTime),
     pnl: 0,
     pnlPct: 0,
-    currentPrice: r.entryPrice,
+    currentPrice: p.entryPrice,
   }));
 }
 
 // ── Trades cerrados ───────────────────────────────────────────────────────────
 function insertTrade(t) {
-  db.prepare(`
-    INSERT INTO trades (id, symbol, strategy, type, entryPrice, size, allocation, tp, sl, confidence, reason, details, openTime, closePrice, closePnl, closePnlPct, closeTime, closeReason, duration)
-    VALUES (@id, @symbol, @strategy, @type, @entryPrice, @size, @allocation, @tp, @sl, @confidence, @reason, @details, @openTime, @closePrice, @closePnl, @closePnlPct, @closeTime, @closeReason, @duration)
-  `).run({
+  data.trades.unshift({
     id: t.id, symbol: t.symbol, strategy: t.strategy, type: t.type,
     entryPrice: t.entryPrice, size: t.size, allocation: t.allocation,
     tp: t.tp, sl: t.sl, confidence: t.confidence, reason: t.reason,
-    details: JSON.stringify(t.details || {}),
+    details: t.details || {},
     openTime: new Date(t.openTime).toISOString(),
     closePrice: t.closePrice, closePnl: t.closePnl, closePnlPct: t.closePnlPct,
     closeTime: new Date(t.closeTime).toISOString(),
     closeReason: t.closeReason, duration: t.duration,
   });
+  if (data.trades.length > 200) data.trades.length = 200;
+  persist();
 }
 
 function getTrades(limit = 200) {
-  return db.prepare(`SELECT * FROM trades ORDER BY rowid DESC LIMIT ?`).all(limit).map(r => ({
-    ...r,
-    details: JSON.parse(r.details || "{}"),
-    openTime: new Date(r.openTime),
-    closeTime: new Date(r.closeTime),
+  return data.trades.slice(0, limit).map(t => ({
+    ...t,
+    openTime: new Date(t.openTime),
+    closeTime: new Date(t.closeTime),
   }));
 }
 
 function clearAll() {
-  db.exec(`DELETE FROM positions`);
-  db.exec(`DELETE FROM trades`);
-  db.exec(`DELETE FROM state`);
+  data = { state: {}, positions: [], trades: [] };
+  persist();
 }
 
 module.exports = {
-  db, getState, setState,
+  getState, setState,
   insertPosition, deletePosition, getPositions,
   insertTrade, getTrades, clearAll,
 };
