@@ -1,7 +1,8 @@
 // engine.js — Motor de paper trading: gestión de posiciones y capital
 
-const config = require("./config");
-const store  = require("./db");
+const config   = require("./config");
+const store    = require("./db");
+const learning = require("./learning");
 
 class TradingEngine {
   constructor() {
@@ -112,12 +113,19 @@ class TradingEngine {
     const check = this.canOpenPosition(signal.symbol, signal.strategy);
     if (!check.ok) return { success: false, reason: check.reason };
 
+    // Ajuste adaptativo: reduce (o aumenta, dentro de límites) el tamaño de la
+    // posición según qué tan bien viene funcionando esta combinación estrategia+símbolo
+    // en el historial propio del bot, y frena todo si viene una racha perdedora global.
+    const strategyMult = learning.getStrategyMultiplier(signal.strategy, signal.symbol);
+    const riskThrottle  = learning.getGlobalRiskThrottle();
+    const adaptiveMult  = strategyMult * riskThrottle;
+
     const allocation = Math.min(
-      this.freeCapital * (config.maxRiskPerTrade / 100),
-      75  // máximo $75 por posición con $500 capital
+      this.freeCapital * (config.maxRiskPerTrade / 100) * adaptiveMult,
+      75 * adaptiveMult  // máximo $75 por posición con $500 capital, escalado igual
     );
 
-    if (allocation < 10) return { success: false, reason: "Allocation demasiado pequeña" };
+    if (allocation < 10) return { success: false, reason: "Allocation demasiado pequeña (ajuste adaptativo por bajo desempeño)" };
 
     const size = (allocation * config.leverage) / signal.price;
 
@@ -133,7 +141,7 @@ class TradingEngine {
       sl:          signal.sl,
       confidence:  signal.confidence,
       reason:      signal.reason,
-      details:     signal.details,
+      details:     { ...signal.details, adaptiveMult: Number(adaptiveMult.toFixed(2)) },
       openTime:    new Date(),
       pnl:         0,
       pnlPct:      0,

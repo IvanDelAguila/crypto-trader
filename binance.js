@@ -85,4 +85,17 @@ async function getPrice(symbol) {
     return parseFloat(data.price);
 }
 
-module.exports = { get24hrTicker, getKlines, getFundingRates, getPrice };
+// Desbalance del order book: -1 (presión vendedora) .. +1 (presión compradora)
+async function getOrderBookImbalance(symbol, limit) {
+    limit = limit || 20;
+    const data = await get(BASE_URL, "/api/v3/depth?symbol=" + symbol + "&limit=" + limit);
+    if (!data.bids || !data.asks) throw new Error("Depth sin bids/asks");
+
+    const bidVol = data.bids.reduce((a, [, qty]) => a + parseFloat(qty), 0);
+    const askVol = data.asks.reduce((a, [, qty]) => a + parseFloat(qty), 0);
+    const total = bidVol + askVol;
+
+    return total === 0 ? 0 : (bidVol - askVol) / total;
+}
+
+module.exports = { get24hrTicker, getKlines, getFundingRates, getPrice, getOrderBookImbalance };
