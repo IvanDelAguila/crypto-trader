@@ -73,6 +73,20 @@
   </section>
 
   <section>
+    <h2>Aprendizaje adaptativo</h2>
+    <div class="row" style="margin-bottom:10px;">
+      <span class="sub">Sentimiento de mercado</span>
+      <span class="badge" id="sentimentBadge">—</span>
+    </div>
+    <div class="row" style="margin-bottom:10px;">
+      <span class="sub">Freno global por racha reciente</span>
+      <span class="badge" id="throttleBadge">—</span>
+    </div>
+    <table id="learningTable"><thead><tr><th>Estrategia</th><th>Muestra</th><th>Multiplicador de riesgo</th></tr></thead><tbody></tbody></table>
+    <div class="sub" style="margin-top:6px;">El bot ajusta el tamaño de cada posición nueva según qué tan bien viene funcionando esa estrategia en su propio historial (mínimo 5 trades para dejar de ser neutral).</div>
+  </section>
+
+  <section>
     <h2>Por estrategia</h2>
     <table id="byStrategyTable"><thead><tr><th>Estrategia</th><th>Trades</th><th>Win%</th><th>PnL avg</th></tr></thead><tbody></tbody></table>
   </section>
@@ -133,6 +147,26 @@ async function refresh(){
       const slLev = s.slPct != null ? '-' + fmt(s.slPct * health.leverage) + '%' : 'variable';
       tr.innerHTML = `<td>${esc(name)}</td><td>${s.enabled ? '🟢' : '🔴'}</td><td>${tp}</td><td>${sl}</td><td class="pos">${tpLev}</td><td class="neg">${slLev}</td>`;
       cfgBody.appendChild(tr);
+    }
+
+    const sentimentBadge = document.getElementById('sentimentBadge');
+    if (health.sentiment) {
+      sentimentBadge.textContent = `${health.sentiment.value} · ${health.sentiment.classification}`;
+    } else {
+      sentimentBadge.textContent = 'Sin datos aún';
+    }
+
+    const throttleBadge = document.getElementById('throttleBadge');
+    const throttle = health.learning?.globalRiskThrottle ?? 1;
+    throttleBadge.textContent = throttle + 'x';
+    throttleBadge.className = 'badge ' + (throttle < 1 ? 'neg' : '');
+
+    const learnBody = document.querySelector('#learningTable tbody');
+    learnBody.innerHTML = '';
+    for (const [name, s] of Object.entries(health.learning?.byStrategy || {})) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${esc(name)}</td><td>${s.sample} trades</td><td class="${s.multiplier >= 1 ? 'pos' : 'neg'}">${s.multiplier}x</td>`;
+      learnBody.appendChild(tr);
     }
 
     const tbody = document.querySelector('#byStrategyTable tbody');

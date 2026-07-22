@@ -78,7 +78,9 @@ const config = {
   fundingInterval:      60000,    // fetch funding rates cada 1min
   signalInterval:       10000,    // evaluar señales cada 10s
   logInterval:          30000,    // log resumen cada 30s
-  candleRefreshInterval: 5 * 60000, // refrescar velas reales de 15m cada 5min
+  candleRefreshInterval: 5 * 60000,  // refrescar velas reales de 15m cada 5min
+  orderBookInterval:     15000,      // fetch order book cada 15s
+  sentimentInterval:     30 * 60000, // fetch Fear & Greed cada 30min (se actualiza ~1/día)
 };
 
 module.exports = config;

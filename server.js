@@ -3,8 +3,9 @@
 const http = require("http");
 const fs   = require("fs");
 const path = require("path");
-const config = require("./config");
-const store  = require("./db");
+const config   = require("./config");
+const store    = require("./db");
+const learning = require("./learning");
 
 const dashboardHtml = fs.readFileSync(path.join(__dirname, "public", "dashboard.html"), "utf8");
 
@@ -140,6 +141,11 @@ class ApiServer {
             slPct: s.slPct != null ? s.slPct * 100 : null,
           }])
         ),
+        sentiment: this.dataStore.sentiment,
+        learning: {
+          globalRiskThrottle: learning.getGlobalRiskThrottle(),
+          byStrategy: learning.getStrategyOverview(Object.keys(config.strategies)),
+        },
       });
     }
 

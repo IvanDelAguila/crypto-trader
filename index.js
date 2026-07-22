@@ -5,6 +5,8 @@ const config        = require("./config");
 const TradingEngine = require("./engine");
 const ApiServer     = require("./server");
 const binance       = require("./binance");
+const sentiment     = require("./sentiment");
+const learning      = require("./learning");
 const { evalAllStrategies } = require("./strategies");
 
 // ── Colores para consola ──────────────────────────────────────────────────────
@@ -39,6 +41,8 @@ const dataStore = {
   changes:      {},
   fundingRates: {},
   priceHistory: {},   // { SYMBOL: [price, price, ...] }  máx 200 velas
+  orderBook:    {},   // { SYMBOL: -1..1 } desbalance compra/venta
+  sentiment:    null, // { value, classification, updated }
   lastUpdate:   null,
 };
 
@@ -110,6 +114,57 @@ async function fetchFundingRates() {
   }
 }
 
+// ── Fetch order book (desbalance compra/venta) ────────────────────────────────
+async function fetchOrderBook() {
+  await Promise.all(
+    config.symbols.map(async (symbol) => {
+      try {
+        dataStore.orderBook[symbol] = await binance.getOrderBookImbalance(symbol);
+      } catch (err) {
+        // Silencioso: si falla, applyMarketContext simplemente no ajusta con esta señal
+      }
+    })
+  );
+}
+
+// ── Fetch sentimiento de mercado (Fear & Greed) ────────────────────────────────
+async function fetchSentiment() {
+  try {
+    dataStore.sentiment = await sentiment.getFearGreedIndex();
+    log.info(`Sentimiento de mercado: ${dataStore.sentiment.value} (${dataStore.sentiment.classification})`);
+  } catch (err) {
+    log.warn("fetchSentiment:", err.message);
+  }
+}
+
+// ── Ajustar confianza de una señal con el contexto de mercado disponible ──────
+// No reemplaza la lógica de cada estrategia: la refuerza si el order book y el
+// sentimiento están alineados, y la penaliza si van en contra, para evitar
+// entrar justo antes de un movimiento adverso.
+function applyMarketContext(signal, symbol) {
+  const context = {};
+  let confidence = signal.confidence;
+
+  const imbalance = dataStore.orderBook[symbol];
+  if (imbalance !== undefined) {
+    const aligned = (signal.type === "LONG" && imbalance > 0) || (signal.type === "SHORT" && imbalance < 0);
+    const adj = Math.abs(imbalance) * 15; // hasta ±15 puntos de confianza
+    confidence += aligned ? adj : -adj;
+    context.orderBookImbalance = Number(imbalance.toFixed(3));
+  }
+
+  const fg = dataStore.sentiment;
+  if (fg) {
+    if (fg.value >= 80 && signal.type === "LONG")  confidence -= 10; // greed extremo: cuidado comprando el techo
+    if (fg.value <= 20 && signal.type === "SHORT") confidence -= 10; // fear extremo: cuidado vendiendo el piso
+    context.sentiment = fg.value;
+    context.sentimentClass = fg.classification;
+  }
+
+  signal.confidence = Math.max(0, Math.min(99, confidence));
+  signal.details = { ...signal.details, marketContext: context };
+}
+
 // ── Cargar / refrescar historial de velas reales ─────────────────────────────
 // Reemplaza priceHistory[symbol] por completo con las últimas 150 velas de
 // 15m reales de Binance. Se llama al arranque y luego periódicamente, para
@@ -148,6 +203,8 @@ function evaluateSignals() {
     const signals = evalAllStrategies(symbol, prices, fundingRate);
 
     for (const signal of signals) {
+      applyMarketContext(signal, symbol);
+
       const full = engine.addSignal(signal);
 
       log.signal(
@@ -161,8 +218,12 @@ function evaluateSignals() {
       newSignals++;
       server.broadcast("signal", full);
 
-      // Auto-trade si está activado y confianza suficiente
-      if (engine.autoTrade && signal.confidence >= config.minConfidence) {
+      // Auto-trade si está activado y la confianza supera el umbral, ajustado
+      // según qué tan bien viene funcionando esta combinación estrategia+símbolo
+      const strategyMult    = learning.getStrategyMultiplier(signal.strategy, symbol);
+      const effectiveMinConf = config.minConfidence + (1 - strategyMult) * 20;
+
+      if (engine.autoTrade && signal.confidence >= effectiveMinConf) {
         const result = engine.openPosition(signal);
         if (result.success) {
           log.trade(
@@ -229,9 +290,11 @@ async function main() {
   // 2. Cargar historial inicial de velas para tener señales desde el arranque
   await refreshCandleHistory();
 
-  // 3. Primer fetch de precios y funding
+  // 3. Primer fetch de precios, funding, order book y sentimiento
   await fetchPrices();
   await fetchFundingRates();
+  await fetchOrderBook();
+  await fetchSentiment();
 
   // 4. Primera evaluación de señales
   evaluateSignals();
@@ -239,6 +302,8 @@ async function main() {
   // 5. Loops periódicos
   setInterval(fetchPrices,             config.priceInterval);
   setInterval(fetchFundingRates,       config.fundingInterval);
+  setInterval(fetchOrderBook,          config.orderBookInterval);
+  setInterval(fetchSentiment,          config.sentimentInterval);
   setInterval(evaluateSignals,         config.signalInterval);
   setInterval(logStatus,               config.logInterval);
   setInterval(() => refreshCandleHistory(true), config.candleRefreshInterval);
