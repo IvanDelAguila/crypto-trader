@@ -130,6 +130,16 @@ class ApiServer {
         autoTrade: this.engine.autoTrade,
         tradingPaused: this.engine.tradingPaused,
         dailyPnl: this.engine.dailyPnl.toFixed(2),
+        maxDailyLossPct: config.maxDailyLossPct,
+        leverage: config.leverage,
+        maxRiskPerTrade: config.maxRiskPerTrade,
+        strategies: Object.fromEntries(
+          Object.entries(config.strategies).map(([k, s]) => [k, {
+            enabled: s.enabled,
+            tpPct: s.tpPct != null ? s.tpPct * 100 : null,
+            slPct: s.slPct != null ? s.slPct * 100 : null,
+          }])
+        ),
       });
     }
 

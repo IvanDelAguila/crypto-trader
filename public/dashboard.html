@@ -63,6 +63,16 @@
   </div>
 
   <section>
+    <h2>Configuración</h2>
+    <div class="grid">
+      <div class="card"><div class="label">Apalancamiento</div><div class="value" id="leverage">—</div></div>
+      <div class="card"><div class="label">Riesgo por trade</div><div class="value" id="maxRisk">—</div></div>
+    </div>
+    <table id="strategyConfigTable"><thead><tr><th>Estrategia</th><th>Estado</th><th>TP precio</th><th>SL precio</th><th>TP en capital*</th><th>SL en capital*</th></tr></thead><tbody></tbody></table>
+    <div class="sub" style="margin-top:6px;">*TP/SL sobre el capital asignado a la posición = % de precio × apalancamiento</div>
+  </section>
+
+  <section>
     <h2>Por estrategia</h2>
     <table id="byStrategyTable"><thead><tr><th>Estrategia</th><th>Trades</th><th>Win%</th><th>PnL avg</th></tr></thead><tbody></tbody></table>
   </section>
@@ -109,6 +119,21 @@ async function refresh(){
     autoBtn.textContent = health.autoTrade ? '🟢 ON' : '🔴 OFF';
 
     document.getElementById('pausedRow').style.display = health.tradingPaused ? 'flex' : 'none';
+
+    document.getElementById('leverage').textContent = health.leverage + 'x';
+    document.getElementById('maxRisk').textContent = health.maxRiskPerTrade + '%';
+
+    const cfgBody = document.querySelector('#strategyConfigTable tbody');
+    cfgBody.innerHTML = '';
+    for (const [name, s] of Object.entries(health.strategies || {})) {
+      const tr = document.createElement('tr');
+      const tp = s.tpPct != null ? fmtP(s.tpPct) : 'variable';
+      const sl = s.slPct != null ? '-' + fmt(s.slPct) + '%' : 'variable';
+      const tpLev = s.tpPct != null ? fmtP(s.tpPct * health.leverage) : 'variable';
+      const slLev = s.slPct != null ? '-' + fmt(s.slPct * health.leverage) + '%' : 'variable';
+      tr.innerHTML = `<td>${esc(name)}</td><td>${s.enabled ? '🟢' : '🔴'}</td><td>${tp}</td><td>${sl}</td><td class="pos">${tpLev}</td><td class="neg">${slLev}</td>`;
+      cfgBody.appendChild(tr);
+    }
 
     const tbody = document.querySelector('#byStrategyTable tbody');
     tbody.innerHTML = '';
