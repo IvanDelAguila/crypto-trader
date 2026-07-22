@@ -103,6 +103,7 @@ async function fetchPrices() {
 
 // ── Fetch funding rates ───────────────────────────────────────────────────────
 async function fetchFundingRates() {
+  if (!config.strategies.FUNDING.enabled) return;
   try {
     const rates = await binance.getFundingRates(config.symbols);
     Object.assign(dataStore.fundingRates, rates);

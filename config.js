@@ -51,7 +51,7 @@ const config = {
       slPct:        0.025,
     },
     FUNDING: {
-      enabled:       true,
+      enabled:       false, // fapi.binance.com da HTTP 451 desde la región de Railway (bloqueo geográfico)
       name:          "Funding Rate Arbitrage",
       minFundingAbs: 0.0003, // mínimo funding rate para operar
       tpPct:         0.03,
