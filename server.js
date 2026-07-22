@@ -128,6 +128,8 @@ class ApiServer {
         positions: this.engine.positions.length,
         equity: this.engine.totalEquity.toFixed(2),
         autoTrade: this.engine.autoTrade,
+        tradingPaused: this.engine.tradingPaused,
+        dailyPnl: this.engine.dailyPnl.toFixed(2),
       });
     }
 
@@ -182,6 +184,13 @@ class ApiServer {
       this.engine.autoTrade = body.enabled !== undefined ? body.enabled : !this.engine.autoTrade;
       store.setState("autoTrade", this.engine.autoTrade);
       return this._json(res, { autoTrade: this.engine.autoTrade });
+    }
+
+    // Reanudar manualmente tras una pausa por límite de pérdida diaria
+    if (method === "POST" && url === "/api/resume") {
+      this.engine.tradingPaused = false;
+      store.setState("tradingPaused", false);
+      return this._json(res, { tradingPaused: false });
     }
 
     // Reset paper trading

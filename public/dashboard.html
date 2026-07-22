@@ -57,6 +57,11 @@
     <button class="toggle" id="autoBtn" onclick="toggleAuto()">—</button>
   </div>
 
+  <div class="row" id="pausedRow" style="display:none;">
+    <span class="sub neg">🛑 Trading pausado (límite de pérdida diaria)</span>
+    <button class="toggle" onclick="resumeTrading()">Reanudar</button>
+  </div>
+
   <section>
     <h2>Por estrategia</h2>
     <table id="byStrategyTable"><thead><tr><th>Estrategia</th><th>Trades</th><th>Win%</th><th>PnL avg</th></tr></thead><tbody></tbody></table>
@@ -103,6 +108,8 @@ async function refresh(){
     const autoBtn = document.getElementById('autoBtn');
     autoBtn.textContent = health.autoTrade ? '🟢 ON' : '🔴 OFF';
 
+    document.getElementById('pausedRow').style.display = health.tradingPaused ? 'flex' : 'none';
+
     const tbody = document.querySelector('#byStrategyTable tbody');
     tbody.innerHTML = '';
     for (const [name, s] of Object.entries(stats.byStrategy || {})) {
@@ -146,6 +153,11 @@ async function refresh(){
 async function toggleAuto(){
   const health = await fetch('/api/health').then(r=>r.json());
   await fetch('/api/auto', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ enabled: !health.autoTrade }) });
+  refresh();
+}
+
+async function resumeTrading(){
+  await fetch('/api/resume', { method:'POST' });
   refresh();
 }
 

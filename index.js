@@ -74,12 +74,9 @@ async function fetchPrices() {
       dataStore.prices[symbol]  = data.price;
       dataStore.changes[symbol] = data.change24h;
 
-      // Actualizar historial (máx 200 velas)
-      if (!dataStore.priceHistory[symbol]) dataStore.priceHistory[symbol] = [];
-      dataStore.priceHistory[symbol].push(data.price);
-      if (dataStore.priceHistory[symbol].length > 200) {
-        dataStore.priceHistory[symbol].shift();
-      }
+      // priceHistory NO se toca acá — son velas reales de 15m, refrescadas
+      // por separado en refreshCandleHistory(). Mezclar ticks de 3s aquí
+      // corrompía el historial y rompía EMA/RSI/Bollinger/Grid.
 
       // Actualizar PnL de posiciones abiertas
       const result = engine.updatePositionPrice(symbol, data.price);
@@ -113,9 +110,12 @@ async function fetchFundingRates() {
   }
 }
 
-// ── Cargar historial inicial ──────────────────────────────────────────────────
-async function loadInitialHistory() {
-  log.info("Cargando historial de velas (esto puede tardar ~30s)...");
+// ── Cargar / refrescar historial de velas reales ─────────────────────────────
+// Reemplaza priceHistory[symbol] por completo con las últimas 150 velas de
+// 15m reales de Binance. Se llama al arranque y luego periódicamente, para
+// que las estrategias siempre evalúen sobre velas reales, no ticks de 3s.
+async function refreshCandleHistory(quiet = false) {
+  if (!quiet) log.info("Cargando historial de velas (esto puede tardar ~30s)...");
   let loaded = 0;
 
   for (const symbol of config.symbols) {
@@ -123,7 +123,7 @@ async function loadInitialHistory() {
       const closes = await binance.getKlines(symbol, "15m", 150);
       dataStore.priceHistory[symbol] = closes;
       loaded++;
-      process.stdout.write(`  ${c.gray}${symbol} ✓${c.reset} `);
+      if (!quiet) process.stdout.write(`  ${c.gray}${symbol} ✓${c.reset} `);
       // Pequeña pausa para no saturar la API
       await new Promise(r => setTimeout(r, 300));
     } catch (err) {
@@ -131,7 +131,8 @@ async function loadInitialHistory() {
     }
   }
 
-  console.log(`\n${c.green}  ${loaded}/${config.symbols.length} símbolos cargados${c.reset}\n`);
+  if (!quiet) console.log(`\n${c.green}  ${loaded}/${config.symbols.length} símbolos cargados${c.reset}\n`);
+  else log.info(`Historial de velas refrescado (${loaded}/${config.symbols.length} símbolos)`);
 }
 
 // ── Evaluar señales ───────────────────────────────────────────────────────────
@@ -226,7 +227,7 @@ async function main() {
   server.start();
 
   // 2. Cargar historial inicial de velas para tener señales desde el arranque
-  await loadInitialHistory();
+  await refreshCandleHistory();
 
   // 3. Primer fetch de precios y funding
   await fetchPrices();
@@ -236,10 +237,11 @@ async function main() {
   evaluateSignals();
 
   // 5. Loops periódicos
-  setInterval(fetchPrices,       config.priceInterval);
-  setInterval(fetchFundingRates, config.fundingInterval);
-  setInterval(evaluateSignals,   config.signalInterval);
-  setInterval(logStatus,         config.logInterval);
+  setInterval(fetchPrices,             config.priceInterval);
+  setInterval(fetchFundingRates,       config.fundingInterval);
+  setInterval(evaluateSignals,         config.signalInterval);
+  setInterval(logStatus,               config.logInterval);
+  setInterval(() => refreshCandleHistory(true), config.candleRefreshInterval);
 
   // Log inicial de estado
   logStatus();

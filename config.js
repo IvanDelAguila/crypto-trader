@@ -24,6 +24,7 @@ const config = {
   initialCapital:   parseFloat(process.env.INITIAL_CAPITAL) || 500,
   leverage:         parseFloat(process.env.LEVERAGE)         || 3,
   maxRiskPerTrade:  parseFloat(process.env.MAX_RISK_PER_TRADE) || 15, // % del capital
+  maxDailyLossPct:  parseFloat(process.env.MAX_DAILY_LOSS_PCT) || 10, // % de pérdida diaria que pausa el auto-trade
   minConfidence:    parseFloat(process.env.MIN_CONFIDENCE)   || 70,
   maxOpenPositions: 6,
   tradeMode:        process.env.TRADE_MODE || "paper", // "paper" | "testnet"
@@ -73,10 +74,11 @@ const config = {
   binanceSecret:  process.env.BINANCE_API_SECRET || "",
 
   // ── Intervals (ms) ────────────────────────────────────────────────────────
-  priceInterval:   3000,   // fetch precios cada 3s
-  fundingInterval: 60000,  // fetch funding rates cada 1min
-  signalInterval:  10000,  // evaluar señales cada 10s
-  logInterval:     30000,  // log resumen cada 30s
+  priceInterval:        3000,     // fetch precios cada 3s
+  fundingInterval:      60000,    // fetch funding rates cada 1min
+  signalInterval:       10000,    // evaluar señales cada 10s
+  logInterval:          30000,    // log resumen cada 30s
+  candleRefreshInterval: 5 * 60000, // refrescar velas reales de 15m cada 5min
 };
 
 module.exports = config;

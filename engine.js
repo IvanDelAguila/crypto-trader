@@ -13,8 +13,26 @@ class TradingEngine {
     this.startTime  = new Date();
     this.autoTrade  = store.getState("autoTrade", config.autoTrade);
 
+    // Freno de pérdida diaria
+    this.dailyPnl      = store.getState("dailyPnl", 0);
+    this.dailyDate      = store.getState("dailyDate", new Date().toDateString());
+    this.tradingPaused  = store.getState("tradingPaused", false);
+
     // Reconstruir estadísticas a partir de los trades persistidos
     for (const trade of this.trades) this._updateStats(trade);
+  }
+
+  // ── Freno de pérdida diaria ───────────────────────────────────────────────
+  _checkDailyReset() {
+    const today = new Date().toDateString();
+    if (today !== this.dailyDate) {
+      this.dailyDate     = today;
+      this.dailyPnl      = 0;
+      this.tradingPaused = false;
+      store.setState("dailyDate", this.dailyDate);
+      store.setState("dailyPnl", this.dailyPnl);
+      store.setState("tradingPaused", this.tradingPaused);
+    }
   }
 
   _initStats() {
@@ -65,6 +83,11 @@ class TradingEngine {
   // ── Posiciones ────────────────────────────────────────────────────────────
 
   canOpenPosition(symbol, strategy) {
+    this._checkDailyReset();
+    if (this.tradingPaused) {
+      return { ok: false, reason: `Trading pausado por límite de pérdida diaria (${this.dailyPnl.toFixed(2)}%)` };
+    }
+
     // No abrir si ya hay posición abierta para este par+estrategia
     const alreadyOpen = this.positions.some(
       p => p.symbol === symbol && p.strategy === strategy
@@ -157,6 +180,15 @@ class TradingEngine {
     store.insertTrade(closedTrade);
     store.setState("capital", this.capital);
 
+    // Freno de pérdida diaria: acumula PnL% del día (sobre capital inicial)
+    this._checkDailyReset();
+    this.dailyPnl += (pnl / config.initialCapital) * 100;
+    store.setState("dailyPnl", this.dailyPnl);
+    if (!this.tradingPaused && this.dailyPnl <= -config.maxDailyLossPct) {
+      this.tradingPaused = true;
+      store.setState("tradingPaused", true);
+    }
+
     // Actualizar estadísticas
     this._updateStats(closedTrade);
 
@@ -246,6 +278,8 @@ class TradingEngine {
       totalReturn:  this.totalReturn.toFixed(2),
       openPositions: this.positions.length,
       uptime:       Math.floor((Date.now() - this.startTime) / 60000),
+      dailyPnl:     this.dailyPnl.toFixed(2),
+      tradingPaused: this.tradingPaused,
       byStrategy:   Object.fromEntries(
         Object.entries(s.byStrategy).map(([k, v]) => [k, {
           ...v,
