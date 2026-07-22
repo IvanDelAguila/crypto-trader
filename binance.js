@@ -14,6 +14,9 @@ function get(host, path) {
             let data = "";
             res.on("data", (chunk) => (data += chunk));
             res.on("end", () => {
+                if (res.statusCode >= 400) {
+                    return reject(new Error(`HTTP ${res.statusCode} from ${host}${path}: ${data.slice(0, 200)}`));
+                }
                 try { resolve(JSON.parse(data)); }
                 catch (e) { reject(new Error("JSON parse error: " + data.slice(0, 200))); }
             });
@@ -60,7 +63,10 @@ async function getKlines(symbol, interval, limit) {
 async function getFundingRates(symbols) {
     try {
         const data = await get(FAPI_URL, "/fapi/v1/premiumIndex");
-        if (!Array.isArray(data)) return {};
+        if (!Array.isArray(data)) {
+            console.log("[binance] premiumIndex no devolvió un array:", JSON.stringify(data).slice(0, 200));
+            return {};
+        }
         const result = {};
         for (const item of data) {
             if (symbols.includes(item.symbol)) {
@@ -68,7 +74,8 @@ async function getFundingRates(symbols) {
             }
         }
         return result;
-    } catch {
+    } catch (e) {
+        console.log("[binance] getFundingRates falló:", e.message);
         return {};
     }
 }
