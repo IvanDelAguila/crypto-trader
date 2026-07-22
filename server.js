@@ -121,6 +121,11 @@ class ApiServer {
       return this._json(res, this.dataStore.priceHistory);
     }
 
+    // Order book: desbalance compra/venta por símbolo (-1 venta .. +1 compra)
+    if (method === "GET" && url === "/api/orderbook") {
+      return this._json(res, this.dataStore.orderBook);
+    }
+
     // Health check
     if (method === "GET" && url === "/api/health") {
       return this._json(res, {

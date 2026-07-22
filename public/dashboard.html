@@ -34,6 +34,14 @@
   .row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px;}
   .item{margin-bottom:8px;}
   footer{color:var(--muted);font-size:0.7rem;text-align:center;margin-top:20px;}
+  .obRow{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:0.8rem;}
+  .obSymbol{width:52px;flex-shrink:0;color:var(--muted);}
+  .obBar{flex:1;height:14px;border-radius:7px;background:var(--border);position:relative;overflow:hidden;}
+  .obMid{position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--muted);opacity:.5;}
+  .obFill{position:absolute;top:0;bottom:0;border-radius:7px;}
+  .obFill.buy{background:var(--green);left:50%;}
+  .obFill.sell{background:var(--red);right:50%;}
+  .obVal{width:44px;flex-shrink:0;text-align:right;font-variant-numeric:tabular-nums;}
 </style>
 </head>
 <body>
@@ -87,6 +95,12 @@
   </section>
 
   <section>
+    <h2>Order book (compra vs venta)</h2>
+    <div id="orderBookList" class="empty">Sin datos aún</div>
+    <div class="sub" style="margin-top:6px;">Desbalance del libro de órdenes en Binance: barra hacia la derecha (verde) = más presión compradora, hacia la izquierda (roja) = más presión vendedora. Se usa para ajustar la confianza de cada señal antes de operar.</div>
+  </section>
+
+  <section>
     <h2>Por estrategia</h2>
     <table id="byStrategyTable"><thead><tr><th>Estrategia</th><th>Trades</th><th>Win%</th><th>PnL avg</th></tr></thead><tbody></tbody></table>
   </section>
@@ -111,11 +125,12 @@ const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','
 
 async function refresh(){
   try{
-    const [health, stats, positions, trades] = await Promise.all([
+    const [health, stats, positions, trades, orderBook] = await Promise.all([
       fetch('/api/health').then(r=>r.json()),
       fetch('/api/stats').then(r=>r.json()),
       fetch('/api/positions').then(r=>r.json()),
       fetch('/api/trades').then(r=>r.json()),
+      fetch('/api/orderbook').then(r=>r.json()),
     ]);
 
     document.getElementById('updated').textContent = 'Actualizado ' + new Date().toLocaleTimeString();
@@ -168,6 +183,26 @@ async function refresh(){
       tr.innerHTML = `<td>${esc(name)}</td><td>${s.sample} trades</td><td class="${s.multiplier >= 1 ? 'pos' : 'neg'}">${s.multiplier}x</td>`;
       learnBody.appendChild(tr);
     }
+
+    const obEntries = Object.entries(orderBook || {});
+    const obDiv = document.getElementById('orderBookList');
+    obDiv.innerHTML = !obEntries.length
+      ? '<div class="empty">Sin datos aún</div>'
+      : obEntries
+          .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+          .map(([symbol, imbalance]) => {
+            const pct = Math.max(-1, Math.min(1, imbalance)) * 50; // % del ancho de la mitad de la barra
+            const short = symbol.replace('USDT', '');
+            const fillClass = imbalance >= 0 ? 'buy' : 'sell';
+            const width = Math.abs(pct);
+            const style = imbalance >= 0 ? `width:${width}%` : `width:${width}%`;
+            return `
+              <div class="obRow">
+                <span class="obSymbol">${esc(short)}</span>
+                <div class="obBar"><div class="obMid"></div><div class="obFill ${fillClass}" style="${style}"></div></div>
+                <span class="obVal ${cls(imbalance)}">${fmtP(imbalance * 100)}</span>
+              </div>`;
+          }).join('');
 
     const tbody = document.querySelector('#byStrategyTable tbody');
     tbody.innerHTML = '';
