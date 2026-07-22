@@ -1,16 +1,20 @@
 // engine.js — Motor de paper trading: gestión de posiciones y capital
 
 const config = require("./config");
+const store  = require("./db");
 
 class TradingEngine {
   constructor() {
-    this.capital    = config.initialCapital;
-    this.positions  = [];          // posiciones abiertas
-    this.trades     = [];          // historial de trades cerrados
-    this.signals    = [];          // señales recientes (últimas 100)
+    this.capital    = store.getState("capital", config.initialCapital);
+    this.positions  = store.getPositions();          // posiciones abiertas
+    this.trades     = store.getTrades(200);          // historial de trades cerrados
+    this.signals    = [];          // señales recientes (últimas 100, no persisten)
     this.stats      = this._initStats();
     this.startTime  = new Date();
-    this.autoTrade  = config.autoTrade;
+    this.autoTrade  = store.getState("autoTrade", config.autoTrade);
+
+    // Reconstruir estadísticas a partir de los trades persistidos
+    for (const trade of this.trades) this._updateStats(trade);
   }
 
   _initStats() {
@@ -114,6 +118,7 @@ class TradingEngine {
     };
 
     this.positions.push(position);
+    store.insertPosition(position);
     return { success: true, position };
   }
 
@@ -146,6 +151,11 @@ class TradingEngine {
     this.positions.splice(idx, 1);
     this.trades.unshift(closedTrade);
     if (this.trades.length > 200) this.trades.pop();
+
+    // Persistir: cierra la posición y guarda el trade
+    store.deletePosition(pos.id);
+    store.insertTrade(closedTrade);
+    store.setState("capital", this.capital);
 
     // Actualizar estadísticas
     this._updateStats(closedTrade);

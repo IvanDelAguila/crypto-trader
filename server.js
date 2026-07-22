@@ -4,6 +4,7 @@ const http = require("http");
 const fs   = require("fs");
 const path = require("path");
 const config = require("./config");
+const store  = require("./db");
 
 const dashboardHtml = fs.readFileSync(path.join(__dirname, "public", "dashboard.html"), "utf8");
 
@@ -179,17 +180,21 @@ class ApiServer {
     if (method === "POST" && url === "/api/auto") {
       const body = await this._parseBody(req);
       this.engine.autoTrade = body.enabled !== undefined ? body.enabled : !this.engine.autoTrade;
+      store.setState("autoTrade", this.engine.autoTrade);
       return this._json(res, { autoTrade: this.engine.autoTrade });
     }
 
     // Reset paper trading
     if (method === "POST" && url === "/api/reset") {
+      store.clearAll();
       this.engine.capital = config.initialCapital;
       this.engine.positions = [];
       this.engine.trades = [];
       this.engine.signals = [];
       this.engine.stats = this.engine._initStats();
       this.engine.startTime = new Date();
+      store.setState("capital", this.engine.capital);
+      store.setState("autoTrade", this.engine.autoTrade);
       return this._json(res, { ok: true, message: "Bot reseteado a $500" });
     }
 
