@@ -27,6 +27,7 @@ const config = {
   maxDailyLossPct:  parseFloat(process.env.MAX_DAILY_LOSS_PCT) || 10, // % de pérdida diaria que pausa el auto-trade
   minConfidence:    parseFloat(process.env.MIN_CONFIDENCE)   || 70,
   maxOpenPositions: 6,
+  breakevenTriggerPct: 0.35, // % del camino hacia el TP para mover el SL a breakeven
   tradeMode:        process.env.TRADE_MODE || "paper", // "paper" | "testnet"
   autoTrade:        process.env.AUTO_TRADE === "true",
 

@@ -219,6 +219,21 @@ class TradingEngine {
       pos.currentPrice = price;
       updated++;
 
+      // Stop-loss a breakeven: una vez que el precio recorrió el % configurado
+      // del camino hacia el TP, el SL sube (o baja, en SHORT) hasta el precio
+      // de entrada, para que el peor caso a partir de ahí sea cerrar en 0.
+      if (!pos.beActivated) {
+        const tpDistance = pos.type === "LONG" ? pos.tp - pos.entryPrice : pos.entryPrice - pos.tp;
+        if (tpDistance > 0) {
+          const progress = diff / tpDistance;
+          if (progress >= config.breakevenTriggerPct) {
+            pos.sl = pos.entryPrice;
+            pos.beActivated = true;
+            store.updatePosition(pos.id, { sl: pos.sl, beActivated: true });
+          }
+        }
+      }
+
       // Verificar SL y TP
       if (pos.type === "LONG") {
         if (price <= pos.sl) toClose.push({ id: pos.id, price, reason: "stop-loss" });

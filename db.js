@@ -63,6 +63,13 @@ function deletePosition(id) {
   persist();
 }
 
+function updatePosition(id, patch) {
+  const pos = data.positions.find(p => p.id === id);
+  if (!pos) return;
+  Object.assign(pos, patch);
+  persist();
+}
+
 function getPositions() {
   return data.positions.map(p => ({
     ...p,
@@ -104,6 +111,6 @@ function clearAll() {
 
 module.exports = {
   getState, setState,
-  insertPosition, deletePosition, getPositions,
+  insertPosition, deletePosition, updatePosition, getPositions,
   insertTrade, getTrades, clearAll,
 };

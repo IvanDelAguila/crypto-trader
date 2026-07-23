@@ -222,10 +222,10 @@ async function refresh(){
       : positions.map(p => `
         <div class="card item">
           <div class="row" style="margin-bottom:0;">
-            <strong>${esc(p.symbol)} ${esc(p.type)} · ${esc(p.strategy)}</strong>
+            <strong>${esc(p.symbol)} ${esc(p.type)} · ${esc(p.strategy)} ${p.beActivated ? '🔒' : ''}</strong>
             <span class="${cls(p.pnlPct)}">${fmtP(p.pnlPct)}</span>
           </div>
-          <div class="sub">entry $${fmt(p.entryPrice,4)} → now $${fmt(p.currentPrice ?? p.entryPrice,4)}</div>
+          <div class="sub">entry $${fmt(p.entryPrice,4)} → now $${fmt(p.currentPrice ?? p.entryPrice,4)} · SL $${fmt(p.sl,4)}</div>
           <div class="sub">capital asignado: $${fmt(p.allocation)}</div>
         </div>
       `).join('');
