@@ -10,9 +10,10 @@ const learning = require("./learning");
 const dashboardHtml = fs.readFileSync(path.join(__dirname, "public", "dashboard.html"), "utf8");
 
 class ApiServer {
-  constructor(engine, dataStore) {
+  constructor(engine, dataStore, smcEngine) {
     this.engine = engine;
     this.dataStore = dataStore;
+    this.smcEngine = smcEngine;
     this.server = null;
     this.clients = new Set(); // SSE clients
   }
@@ -154,6 +155,86 @@ class ApiServer {
       });
     }
 
+    // ── Motor de prueba SMC (capital y posiciones aparte del bot principal) ───
+
+    if (method === "GET" && url === "/api/smc/state") {
+      return this._json(res, {
+        ...this.smcEngine.getState(),
+        prices: this.dataStore.prices,
+        changes: this.dataStore.changes,
+      });
+    }
+
+    if (method === "GET" && url === "/api/smc/stats") {
+      return this._json(res, this.smcEngine.getFullStats());
+    }
+
+    if (method === "GET" && url === "/api/smc/positions") {
+      return this._json(res, this.smcEngine.positions);
+    }
+
+    if (method === "GET" && url === "/api/smc/trades") {
+      return this._json(res, this.smcEngine.trades.slice(0, 100));
+    }
+
+    if (method === "GET" && url === "/api/smc/signals") {
+      return this._json(res, this.smcEngine.signals);
+    }
+
+    if (method === "GET" && url === "/api/smc/health") {
+      return this._json(res, {
+        status: "ok",
+        uptime: Math.floor((Date.now() - this.smcEngine.startTime) / 1000),
+        positions: this.smcEngine.positions.length,
+        equity: this.smcEngine.totalEquity.toFixed(2),
+        autoTrade: this.smcEngine.autoTrade,
+        tradingPaused: this.smcEngine.tradingPaused,
+        dailyPnl: this.smcEngine.dailyPnl.toFixed(2),
+        maxDailyLossPct: config.smc.maxDailyLossPct,
+        leverage: config.smc.leverage,
+        maxRiskPerTrade: config.smc.maxRiskPerTrade,
+        initialCapital: config.smc.initialCapital,
+        learning: {
+          globalRiskThrottle: this.smcEngine.learning.getGlobalRiskThrottle(),
+          byStrategy: this.smcEngine.learning.getStrategyOverview(["SMC"]),
+        },
+      });
+    }
+
+    if (method === "POST" && url === "/api/smc/auto") {
+      const body = await this._parseBody(req);
+      this.smcEngine.autoTrade = body.enabled !== undefined ? body.enabled : !this.smcEngine.autoTrade;
+      this.smcEngine.store.setState("autoTrade", this.smcEngine.autoTrade);
+      return this._json(res, { autoTrade: this.smcEngine.autoTrade });
+    }
+
+    if (method === "POST" && url === "/api/smc/resume") {
+      this.smcEngine.tradingPaused = false;
+      this.smcEngine.store.setState("tradingPaused", false);
+      return this._json(res, { tradingPaused: false });
+    }
+
+    if (method === "POST" && url === "/api/smc/close") {
+      const body = await this._parseBody(req);
+      if (!body.posId) return this._json(res, { error: "posId requerido" }, 400);
+      const price = this.dataStore.prices[body.symbol]?.price;
+      const result = this.smcEngine.closePosition(body.posId, price, "manual");
+      return this._json(res, result, result.success ? 200 : 400);
+    }
+
+    if (method === "POST" && url === "/api/smc/reset") {
+      this.smcEngine.store.clearAll();
+      this.smcEngine.capital = this.smcEngine.initialCapital;
+      this.smcEngine.positions = [];
+      this.smcEngine.trades = [];
+      this.smcEngine.signals = [];
+      this.smcEngine.stats = this.smcEngine._initStats();
+      this.smcEngine.startTime = new Date();
+      this.smcEngine.store.setState("capital", this.smcEngine.capital);
+      this.smcEngine.store.setState("autoTrade", this.smcEngine.autoTrade);
+      return this._json(res, { ok: true, message: `Motor SMC reseteado a $${this.smcEngine.initialCapital}` });
+    }
+
     // SSE — Server-Sent Events para updates en tiempo real
     if (method === "GET" && url === "/api/stream") {
       this._cors(res);
@@ -217,7 +298,7 @@ class ApiServer {
     // Reset paper trading
     if (method === "POST" && url === "/api/reset") {
       store.clearAll();
-      this.engine.capital = config.initialCapital;
+      this.engine.capital = this.engine.initialCapital;
       this.engine.positions = [];
       this.engine.trades = [];
       this.engine.signals = [];
@@ -225,7 +306,7 @@ class ApiServer {
       this.engine.startTime = new Date();
       store.setState("capital", this.engine.capital);
       store.setState("autoTrade", this.engine.autoTrade);
-      return this._json(res, { ok: true, message: "Bot reseteado a $500" });
+      return this._json(res, { ok: true, message: `Bot reseteado a $${this.engine.initialCapital}` });
     }
 
     this._notFound(res);

@@ -82,6 +82,32 @@ const config = {
   candleRefreshInterval: 5 * 60000,  // refrescar velas reales de 15m cada 5min
   orderBookInterval:     15000,      // fetch order book cada 15s
   sentimentInterval:     30 * 60000, // fetch Fear & Greed cada 30min (se actualiza ~1/día)
+
+  // ── Motor de prueba SMC (Smart Money Concepts) ─────────────────────────────
+  // Pool de capital totalmente separado del bot principal — mismo feed de precios
+  // y order book, pero capital, posiciones y aprendizaje adaptativo propios, para
+  // poder validar la estrategia sin arriesgar el capital del bot de arriba.
+  smc: {
+    initialCapital:      parseFloat(process.env.SMC_INITIAL_CAPITAL) || 1000,
+    leverage:            parseFloat(process.env.SMC_LEVERAGE) || 3,
+    maxRiskPerTrade:     parseFloat(process.env.SMC_MAX_RISK_PER_TRADE) || 15,
+    maxDailyLossPct:     parseFloat(process.env.SMC_MAX_DAILY_LOSS_PCT) || 10,
+    minConfidence:       parseFloat(process.env.SMC_MIN_CONFIDENCE) || 70,
+    maxOpenPositions:    4,
+    breakevenTriggerPct: 0.35,
+    autoTrade:           process.env.SMC_AUTO_TRADE === "true",
+    candleRefreshInterval: 5 * 60000, // refrescar velas OHLC cada 5min
+    strategy: {
+      enabled:           true,
+      swingWindow:       3,      // velas a cada lado para considerar un swing high/low
+      impulsePct:        0.015,  // % mínimo de cuerpo de vela para contar como "impulso" al armar el order block
+      sweepRecency:       1,      // el liquidity sweep debe estar a lo sumo a N velas del final
+      confirmImpulsePct: 0.004,  // % mínimo de cuerpo en la vela de confirmación tras el sweep
+      slBufferPct:       0.002,  // colchón extra del SL debajo/encima del nivel barrido
+      rrRatio:           2,       // TP = riesgo (entrada-SL) × este ratio
+      minCandles:        40,
+    },
+  },
 };
 
 module.exports = config;

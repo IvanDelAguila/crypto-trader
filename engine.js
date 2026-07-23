@@ -1,23 +1,40 @@
 // engine.js — Motor de paper trading: gestión de posiciones y capital
+//
+// Se instancia con opciones para poder correr varios pools de capital
+// totalmente independientes en el mismo proceso (ej. el bot principal y un
+// motor de prueba con otra estrategia y otro capital). Sin opciones, usa el
+// store y la config por defecto — así el bot principal no tuvo que cambiar
+// su forma de crear el engine.
 
-const config   = require("./config");
-const store    = require("./db");
-const learning = require("./learning");
+const config          = require("./config");
+const defaultStore    = require("./db");
+const defaultLearning = require("./learning");
 
 class TradingEngine {
-  constructor() {
-    this.capital    = store.getState("capital", config.initialCapital);
-    this.positions  = store.getPositions();          // posiciones abiertas
-    this.trades     = store.getTrades(200);          // historial de trades cerrados
+  constructor(opts = {}) {
+    this.store    = opts.store    || defaultStore;
+    this.learning = opts.learning || defaultLearning;
+
+    this.initialCapital      = opts.initialCapital      ?? config.initialCapital;
+    this.leverage             = opts.leverage             ?? config.leverage;
+    this.maxRiskPerTrade      = opts.maxRiskPerTrade      ?? config.maxRiskPerTrade;
+    this.maxOpenPositions     = opts.maxOpenPositions     ?? config.maxOpenPositions;
+    this.maxDailyLossPct      = opts.maxDailyLossPct      ?? config.maxDailyLossPct;
+    this.breakevenTriggerPct  = opts.breakevenTriggerPct  ?? config.breakevenTriggerPct;
+    this.maxAllocationPerTrade = opts.maxAllocationPerTrade ?? (this.initialCapital * 0.15); // ~equivalente a los $75 sobre $500 originales
+
+    this.capital    = this.store.getState("capital", this.initialCapital);
+    this.positions  = this.store.getPositions();          // posiciones abiertas
+    this.trades     = this.store.getTrades(200);          // historial de trades cerrados
     this.signals    = [];          // señales recientes (últimas 100, no persisten)
     this.stats      = this._initStats();
     this.startTime  = new Date();
-    this.autoTrade  = store.getState("autoTrade", config.autoTrade);
+    this.autoTrade  = this.store.getState("autoTrade", opts.autoTrade ?? config.autoTrade);
 
     // Freno de pérdida diaria
-    this.dailyPnl      = store.getState("dailyPnl", 0);
-    this.dailyDate      = store.getState("dailyDate", new Date().toDateString());
-    this.tradingPaused  = store.getState("tradingPaused", false);
+    this.dailyPnl      = this.store.getState("dailyPnl", 0);
+    this.dailyDate      = this.store.getState("dailyDate", new Date().toDateString());
+    this.tradingPaused  = this.store.getState("tradingPaused", false);
 
     // Reconstruir estadísticas a partir de los trades persistidos
     for (const trade of this.trades) this._updateStats(trade);
@@ -30,9 +47,9 @@ class TradingEngine {
       this.dailyDate     = today;
       this.dailyPnl      = 0;
       this.tradingPaused = false;
-      store.setState("dailyDate", this.dailyDate);
-      store.setState("dailyPnl", this.dailyPnl);
-      store.setState("tradingPaused", this.tradingPaused);
+      this.store.setState("dailyDate", this.dailyDate);
+      this.store.setState("dailyPnl", this.dailyPnl);
+      this.store.setState("tradingPaused", this.tradingPaused);
     }
   }
 
@@ -44,13 +61,8 @@ class TradingEngine {
       totalPnL:     0,
       bestTrade:    null,
       worstTrade:   null,
-      byStrategy:   {
-        EMA:     { trades: 0, wins: 0, pnl: 0 },
-        RSI:     { trades: 0, wins: 0, pnl: 0 },
-        FUNDING: { trades: 0, wins: 0, pnl: 0 },
-        GRID:    { trades: 0, wins: 0, pnl: 0 },
-      },
-      bySymbol: {},
+      byStrategy:   {},
+      bySymbol:     {},
     };
   }
 
@@ -70,7 +82,7 @@ class TradingEngine {
   }
 
   get totalReturn() {
-    return ((this.totalEquity - config.initialCapital) / config.initialCapital) * 100;
+    return ((this.totalEquity - this.initialCapital) / this.initialCapital) * 100;
   }
 
   // ── Señales ───────────────────────────────────────────────────────────────
@@ -96,8 +108,8 @@ class TradingEngine {
     if (alreadyOpen) return { ok: false, reason: "Ya hay posición abierta" };
 
     // No superar máximo de posiciones simultáneas
-    if (this.positions.length >= config.maxOpenPositions) {
-      return { ok: false, reason: `Máximo de posiciones alcanzado (${config.maxOpenPositions})` };
+    if (this.positions.length >= this.maxOpenPositions) {
+      return { ok: false, reason: `Máximo de posiciones alcanzado (${this.maxOpenPositions})` };
     }
 
     // Capital mínimo disponible
@@ -116,18 +128,18 @@ class TradingEngine {
     // Ajuste adaptativo: reduce (o aumenta, dentro de límites) el tamaño de la
     // posición según qué tan bien viene funcionando esta combinación estrategia+símbolo
     // en el historial propio del bot, y frena todo si viene una racha perdedora global.
-    const strategyMult = learning.getStrategyMultiplier(signal.strategy, signal.symbol);
-    const riskThrottle  = learning.getGlobalRiskThrottle();
+    const strategyMult = this.learning.getStrategyMultiplier(signal.strategy, signal.symbol);
+    const riskThrottle  = this.learning.getGlobalRiskThrottle();
     const adaptiveMult  = strategyMult * riskThrottle;
 
     const allocation = Math.min(
-      this.freeCapital * (config.maxRiskPerTrade / 100) * adaptiveMult,
-      75 * adaptiveMult  // máximo $75 por posición con $500 capital, escalado igual
+      this.freeCapital * (this.maxRiskPerTrade / 100) * adaptiveMult,
+      this.maxAllocationPerTrade * adaptiveMult
     );
 
     if (allocation < 10) return { success: false, reason: "Allocation demasiado pequeña (ajuste adaptativo por bajo desempeño)" };
 
-    const size = (allocation * config.leverage) / signal.price;
+    const size = (allocation * this.leverage) / signal.price;
 
     const position = {
       id:          `${signal.symbol}-${signal.strategy}-${Date.now()}`,
@@ -149,7 +161,7 @@ class TradingEngine {
     };
 
     this.positions.push(position);
-    store.insertPosition(position);
+    this.store.insertPosition(position);
     return { success: true, position };
   }
 
@@ -184,17 +196,17 @@ class TradingEngine {
     if (this.trades.length > 200) this.trades.pop();
 
     // Persistir: cierra la posición y guarda el trade
-    store.deletePosition(pos.id);
-    store.insertTrade(closedTrade);
-    store.setState("capital", this.capital);
+    this.store.deletePosition(pos.id);
+    this.store.insertTrade(closedTrade);
+    this.store.setState("capital", this.capital);
 
     // Freno de pérdida diaria: acumula PnL% del día (sobre capital inicial)
     this._checkDailyReset();
-    this.dailyPnl += (pnl / config.initialCapital) * 100;
-    store.setState("dailyPnl", this.dailyPnl);
-    if (!this.tradingPaused && this.dailyPnl <= -config.maxDailyLossPct) {
+    this.dailyPnl += (pnl / this.initialCapital) * 100;
+    this.store.setState("dailyPnl", this.dailyPnl);
+    if (!this.tradingPaused && this.dailyPnl <= -this.maxDailyLossPct) {
       this.tradingPaused = true;
-      store.setState("tradingPaused", true);
+      this.store.setState("tradingPaused", true);
     }
 
     // Actualizar estadísticas
@@ -226,10 +238,10 @@ class TradingEngine {
         const tpDistance = pos.type === "LONG" ? pos.tp - pos.entryPrice : pos.entryPrice - pos.tp;
         if (tpDistance > 0) {
           const progress = diff / tpDistance;
-          if (progress >= config.breakevenTriggerPct) {
+          if (progress >= this.breakevenTriggerPct) {
             pos.sl = pos.entryPrice;
             pos.beActivated = true;
-            store.updatePosition(pos.id, { sl: pos.sl, beActivated: true });
+            this.store.updatePosition(pos.id, { sl: pos.sl, beActivated: true });
           }
         }
       }
@@ -270,11 +282,12 @@ class TradingEngine {
     }
 
     // Por estrategia
-    if (s.byStrategy[trade.strategy]) {
-      s.byStrategy[trade.strategy].trades++;
-      s.byStrategy[trade.strategy].pnl += trade.closePnl;
-      if (trade.closePnl > 0) s.byStrategy[trade.strategy].wins++;
+    if (!s.byStrategy[trade.strategy]) {
+      s.byStrategy[trade.strategy] = { trades: 0, wins: 0, pnl: 0 };
     }
+    s.byStrategy[trade.strategy].trades++;
+    s.byStrategy[trade.strategy].pnl += trade.closePnl;
+    if (trade.closePnl > 0) s.byStrategy[trade.strategy].wins++;
 
     // Por symbol
     if (!s.bySymbol[trade.symbol]) {
