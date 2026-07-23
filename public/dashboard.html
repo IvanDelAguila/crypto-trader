@@ -58,6 +58,8 @@
     <div class="card"><div class="label">Retorno</div><div class="value" id="return">—</div></div>
     <div class="card"><div class="label">Win rate</div><div class="value" id="winrate">—</div></div>
     <div class="card"><div class="label">Trades</div><div class="value" id="trades">—</div></div>
+    <div class="card"><div class="label">Capital libre</div><div class="value" id="freeCapital">—</div></div>
+    <div class="card"><div class="label">Capital en uso</div><div class="value" id="usedCapital">—</div></div>
   </div>
 
   <div class="row">
@@ -143,6 +145,8 @@ async function refresh(){
     retEl.className = 'value ' + cls(stats.totalReturn);
     document.getElementById('winrate').textContent = stats.winRate + '%';
     document.getElementById('trades').textContent = stats.totalTrades + ' (' + stats.openPositions + ' abiertas)';
+    document.getElementById('freeCapital').textContent = '$' + fmt(stats.freeCapital);
+    document.getElementById('usedCapital').textContent = '$' + fmt(Number(stats.capital) - Number(stats.freeCapital));
 
     const autoBtn = document.getElementById('autoBtn');
     autoBtn.textContent = health.autoTrade ? '🟢 ON' : '🔴 OFF';
@@ -222,6 +226,7 @@ async function refresh(){
             <span class="${cls(p.pnlPct)}">${fmtP(p.pnlPct)}</span>
           </div>
           <div class="sub">entry $${fmt(p.entryPrice,4)} → now $${fmt(p.currentPrice ?? p.entryPrice,4)}</div>
+          <div class="sub">capital asignado: $${fmt(p.allocation)}</div>
         </div>
       `).join('');
 
