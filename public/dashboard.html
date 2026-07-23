@@ -42,6 +42,11 @@
   .obFill.buy{background:var(--green);left:50%;}
   .obFill.sell{background:var(--red);right:50%;}
   .obVal{width:44px;flex-shrink:0;text-align:right;font-variant-numeric:tabular-nums;}
+  .smcSection{border:1px solid #a78bfa;border-radius:14px;padding:14px;margin-top:28px;background:rgba(167,139,250,0.06);}
+  .smcSection h2{color:#a78bfa;}
+  .smcTitle{display:flex;align-items:center;gap:8px;margin-bottom:4px;}
+  .smcTitle strong{font-size:0.95rem;}
+  .smcBadge{background:#a78bfa;color:#1a1030;font-size:0.65rem;font-weight:700;padding:2px 8px;border-radius:999px;text-transform:uppercase;letter-spacing:.04em;}
 </style>
 </head>
 <body>
@@ -116,6 +121,40 @@
     <h2>Últimos trades</h2>
     <div id="tradesList" class="empty">Sin datos aún</div>
   </section>
+
+  <div class="smcSection">
+    <div class="smcTitle"><strong>🧪 Estrategia SMC</strong><span class="smcBadge">Prueba aislada</span></div>
+    <div class="sub" style="margin-bottom:12px;">Order Blocks + Liquidity Sweep. Capital, posiciones y aprendizaje 100% separados del bot de arriba — nada de esto afecta al pool principal.</div>
+
+    <div class="grid">
+      <div class="card"><div class="label">Equity</div><div class="value" id="smcEquity">—</div></div>
+      <div class="card"><div class="label">Retorno</div><div class="value" id="smcReturn">—</div></div>
+      <div class="card"><div class="label">Win rate</div><div class="value" id="smcWinrate">—</div></div>
+      <div class="card"><div class="label">Trades</div><div class="value" id="smcTrades">—</div></div>
+      <div class="card"><div class="label">Capital libre</div><div class="value" id="smcFreeCapital">—</div></div>
+      <div class="card"><div class="label">Capital en uso</div><div class="value" id="smcUsedCapital">—</div></div>
+    </div>
+
+    <div class="row">
+      <span class="sub">Auto-trade</span>
+      <button class="toggle" id="smcAutoBtn" onclick="toggleSmcAuto()">—</button>
+    </div>
+
+    <div class="row" id="smcPausedRow" style="display:none;">
+      <span class="sub neg">🛑 Trading pausado (límite de pérdida diaria)</span>
+      <button class="toggle" onclick="resumeSmcTrading()">Reanudar</button>
+    </div>
+
+    <section>
+      <h2>Posiciones abiertas (SMC)</h2>
+      <div id="smcPositions" class="empty">Sin datos aún</div>
+    </section>
+
+    <section>
+      <h2>Últimos trades (SMC)</h2>
+      <div id="smcTradesList" class="empty">Sin datos aún</div>
+    </section>
+  </div>
 
   <footer>Actualiza cada 5s · Paper trading, sin dinero real</footer>
 
@@ -260,8 +299,76 @@ async function resumeTrading(){
   refresh();
 }
 
+async function refreshSmc(){
+  try{
+    const [health, stats, positions, trades] = await Promise.all([
+      fetch('/api/smc/health').then(r=>r.json()),
+      fetch('/api/smc/stats').then(r=>r.json()),
+      fetch('/api/smc/positions').then(r=>r.json()),
+      fetch('/api/smc/trades').then(r=>r.json()),
+    ]);
+
+    document.getElementById('smcEquity').textContent = '$' + fmt(stats.totalEquity);
+    const retEl = document.getElementById('smcReturn');
+    retEl.textContent = fmtP(Number(stats.totalReturn));
+    retEl.className = 'value ' + cls(stats.totalReturn);
+    document.getElementById('smcWinrate').textContent = stats.winRate + '%';
+    document.getElementById('smcTrades').textContent = stats.totalTrades + ' (' + stats.openPositions + ' abiertas)';
+    document.getElementById('smcFreeCapital').textContent = '$' + fmt(stats.freeCapital);
+    document.getElementById('smcUsedCapital').textContent = '$' + fmt(Number(stats.capital) - Number(stats.freeCapital));
+
+    const autoBtn = document.getElementById('smcAutoBtn');
+    autoBtn.textContent = health.autoTrade ? '🟢 ON' : '🔴 OFF';
+
+    document.getElementById('smcPausedRow').style.display = health.tradingPaused ? 'flex' : 'none';
+
+    const posDiv = document.getElementById('smcPositions');
+    posDiv.innerHTML = !positions.length
+      ? '<div class="empty">Sin posiciones abiertas</div>'
+      : positions.map(p => `
+        <div class="card item">
+          <div class="row" style="margin-bottom:0;">
+            <strong>${esc(p.symbol)} ${esc(p.type)} ${p.beActivated ? '🔒' : ''}</strong>
+            <span class="${cls(p.pnlPct)}">${fmtP(p.pnlPct)}</span>
+          </div>
+          <div class="sub">entry $${fmt(p.entryPrice,4)} → now $${fmt(p.currentPrice ?? p.entryPrice,4)} · SL $${fmt(p.sl,4)}</div>
+          <div class="sub">capital asignado: $${fmt(p.allocation)} · ${esc(p.reason || '')}</div>
+        </div>
+      `).join('');
+
+    const trDiv = document.getElementById('smcTradesList');
+    trDiv.innerHTML = !trades.length
+      ? '<div class="empty">Sin trades cerrados aún</div>'
+      : trades.slice(0, 20).map(t => `
+        <div class="card item">
+          <div class="row" style="margin-bottom:0;">
+            <strong>${esc(t.symbol)} ${esc(t.type)}</strong>
+            <span class="${cls(t.closePnlPct)}">${fmtP(t.closePnlPct)}</span>
+          </div>
+          <div class="sub">${esc(t.closeReason)} · ${new Date(t.closeTime).toLocaleTimeString()}</div>
+        </div>
+      `).join('');
+
+  } catch (e) {
+    // Sección SMC no disponible (ej. deploy viejo sin este endpoint aún) — no rompe el resto del dashboard
+  }
+}
+
+async function toggleSmcAuto(){
+  const health = await fetch('/api/smc/health').then(r=>r.json());
+  await fetch('/api/smc/auto', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ enabled: !health.autoTrade }) });
+  refreshSmc();
+}
+
+async function resumeSmcTrading(){
+  await fetch('/api/smc/resume', { method:'POST' });
+  refreshSmc();
+}
+
 refresh();
+refreshSmc();
 setInterval(refresh, 5000);
+setInterval(refreshSmc, 5000);
 </script>
 </body>
 </html>

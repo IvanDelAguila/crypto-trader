@@ -98,4 +98,23 @@ async function getOrderBookImbalance(symbol, limit) {
     return total === 0 ? 0 : (bidVol - askVol) / total;
 }
 
-module.exports = { get24hrTicker, getKlines, getFundingRates, getPrice, getOrderBookImbalance };
+// Velas OHLC completas (a diferencia de getKlines, que solo devuelve el cierre).
+// Hace falta open/high/low para detectar order blocks y liquidity sweeps.
+async function getKlinesOHLC(symbol, interval, limit) {
+    interval = interval || "15m";
+    limit = limit || 150;
+    const data = await get(
+        BASE_URL,
+        "/api/v3/klines?symbol=" + symbol + "&interval=" + interval + "&limit=" + limit
+    );
+    if (!Array.isArray(data)) throw new Error("Klines not array");
+    return data.map((k) => ({
+        openTime: k[0],
+        open:  parseFloat(k[1]),
+        high:  parseFloat(k[2]),
+        low:   parseFloat(k[3]),
+        close: parseFloat(k[4]),
+    }));
+}
+
+module.exports = { get24hrTicker, getKlines, getFundingRates, getPrice, getOrderBookImbalance, getKlinesOHLC };

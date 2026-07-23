@@ -7,7 +7,9 @@ const ApiServer     = require("./server");
 const binance       = require("./binance");
 const sentiment     = require("./sentiment");
 const learning      = require("./learning");
+const db            = require("./db");
 const { evalAllStrategies } = require("./strategies");
+const { evalSMC }   = require("./smc-strategy");
 
 // ── Colores para consola ──────────────────────────────────────────────────────
 const c = {
@@ -41,6 +43,7 @@ const dataStore = {
   changes:      {},
   fundingRates: {},
   priceHistory: {},   // { SYMBOL: [price, price, ...] }  máx 200 velas
+  ohlcHistory:  {},   // { SYMBOL: [{open,high,low,close}, ...] } — solo para el motor SMC
   orderBook:    {},   // { SYMBOL: -1..1 } desbalance compra/venta
   sentiment:    null, // { value, classification, updated }
   lastUpdate:   null,
@@ -48,7 +51,25 @@ const dataStore = {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 const engine = new TradingEngine();
-const server = new ApiServer(engine, dataStore);
+
+// Motor de prueba SMC: mismo proceso, mismo feed de precios/order book/sentimiento,
+// pero capital, posiciones, trades y aprendizaje adaptativo 100% independientes
+// (archivo trading-smc.json aparte). Nada de esto toca al bot principal.
+const smcStore    = db.createStore("trading-smc.json");
+const smcLearning = learning.createLearning(smcStore);
+const smcEngine   = new TradingEngine({
+  store:               smcStore,
+  learning:            smcLearning,
+  initialCapital:      config.smc.initialCapital,
+  leverage:            config.smc.leverage,
+  maxRiskPerTrade:     config.smc.maxRiskPerTrade,
+  maxOpenPositions:    config.smc.maxOpenPositions,
+  maxDailyLossPct:     config.smc.maxDailyLossPct,
+  breakevenTriggerPct: config.smc.breakevenTriggerPct,
+  autoTrade:           config.smc.autoTrade,
+});
+
+const server = new ApiServer(engine, dataStore, smcEngine);
 
 // ── Banner ────────────────────────────────────────────────────────────────────
 function printBanner() {
@@ -66,6 +87,11 @@ ${c.cyan}${c.bright}╔═══════════════════
   Estrategias     : ${c.gray}EMA · RSI/BB · Funding Rate · Grid${c.reset}
   API Port        : ${c.cyan}${config.port}${c.reset}
 
+  ${c.magenta}Motor de prueba SMC${c.reset} (capital aparte, no afecta al de arriba):
+  Capital inicial : ${c.green}$${config.smc.initialCapital}${c.reset}
+  Estrategia      : ${c.gray}Order Blocks + Liquidity Sweep${c.reset}
+  Auto-trade      : ${smcEngine.autoTrade ? c.green + "ON" : c.red + "OFF"}${c.reset}
+
 `);
 }
 
@@ -82,7 +108,7 @@ async function fetchPrices() {
       // por separado en refreshCandleHistory(). Mezclar ticks de 3s aquí
       // corrompía el historial y rompía EMA/RSI/Bollinger/Grid.
 
-      // Actualizar PnL de posiciones abiertas
+      // Actualizar PnL de posiciones abiertas del bot principal
       const result = engine.updatePositionPrice(symbol, data.price);
       if (result.closed.length > 0) {
         for (const trade of result.closed) {
@@ -90,6 +116,17 @@ async function fetchPrices() {
           const reason = trade.closeReason === "take-profit" ? "TAKE PROFIT" : trade.closeReason === "stop-loss" ? "STOP LOSS" : "MANUAL";
           log.close(`${emoji} ${trade.symbol} ${trade.strategy} ${reason} | PnL: ${trade.closePnl >= 0 ? c.green : c.red}$${fmt(trade.closePnl)}${c.reset} (${fmtP(trade.closePnlPct)}) | Duración: ${trade.duration}m`);
           server.broadcast("trade_closed", trade);
+        }
+      }
+
+      // Idem para las posiciones del motor SMC (pool de capital aparte)
+      const smcResult = smcEngine.updatePositionPrice(symbol, data.price);
+      if (smcResult.closed.length > 0) {
+        for (const trade of smcResult.closed) {
+          const emoji  = trade.closePnl >= 0 ? "✅" : "❌";
+          const reason = trade.closeReason === "take-profit" ? "TAKE PROFIT" : trade.closeReason === "stop-loss" ? "STOP LOSS" : "MANUAL";
+          log.close(`${emoji} [SMC] ${trade.symbol} ${reason} | PnL: ${trade.closePnl >= 0 ? c.green : c.red}$${fmt(trade.closePnl)}${c.reset} (${fmtP(trade.closePnlPct)}) | Duración: ${trade.duration}m`);
+          server.broadcast("smc_trade_closed", trade);
         }
       }
     }
@@ -163,6 +200,63 @@ function applyMarketContext(signal, symbol) {
 
   signal.confidence = Math.max(0, Math.min(99, confidence));
   signal.details = { ...signal.details, marketContext: context };
+}
+
+// ── Cargar / refrescar historial de velas OHLC (solo para el motor SMC) ──────
+async function refreshOHLCHistory(quiet = true) {
+  let loaded = 0;
+  for (const symbol of config.symbols) {
+    try {
+      dataStore.ohlcHistory[symbol] = await binance.getKlinesOHLC(symbol, "15m", 150);
+      loaded++;
+      await new Promise(r => setTimeout(r, 300));
+    } catch (err) {
+      log.warn(`[SMC] No se pudo cargar OHLC de ${symbol}: ${err.message}`);
+    }
+  }
+  if (!quiet) log.info(`[SMC] Historial OHLC cargado (${loaded}/${config.symbols.length} símbolos)`);
+}
+
+// ── Evaluar señales del motor SMC ─────────────────────────────────────────────
+function evaluateSMCSignals() {
+  let newSignals = 0;
+
+  for (const symbol of config.symbols) {
+    const candles = dataStore.ohlcHistory[symbol] || [];
+    const signal = evalSMC(symbol, candles);
+    if (!signal) continue;
+
+    applyMarketContext(signal, symbol); // reutiliza el mismo ajuste de order book/sentimiento
+
+    const full = smcEngine.addSignal(signal);
+    log.signal(
+      `📡 [SMC] ${c.bright}${config.symbolMeta[symbol]?.short || symbol}${c.reset}` +
+      ` ${signal.type === "LONG" ? c.green + "LONG" : c.red + "SHORT"}${c.reset}` +
+      ` conf: ${signal.confidence.toFixed(0)}%` +
+      ` | ${signal.reason}`
+    );
+
+    newSignals++;
+    server.broadcast("smc_signal", full);
+
+    const strategyMult    = smcLearning.getStrategyMultiplier(signal.strategy, symbol);
+    const effectiveMinConf = config.smc.minConfidence + (1 - strategyMult) * 20;
+
+    if (smcEngine.autoTrade && signal.confidence >= effectiveMinConf) {
+      const result = smcEngine.openPosition(signal);
+      if (result.success) {
+        log.trade(
+          `🚀 [SMC] ABRIENDO ${signal.type} ${config.symbolMeta[symbol]?.short}` +
+          ` @ $${fmt(signal.price)}` +
+          ` | alloc: $${fmt(result.position.allocation)}` +
+          ` | TP: $${fmt(signal.tp)} SL: $${fmt(signal.sl)}`
+        );
+        server.broadcast("smc_position_opened", result.position);
+      }
+    }
+  }
+
+  return newSignals;
 }
 
 // ── Cargar / refrescar historial de velas reales ─────────────────────────────
@@ -278,6 +372,15 @@ ${c.gray}━━━━━━━━━━━━━━━━━━━━━━━�
   }
 
   server.broadcast("status", engine.getState());
+
+  // Resumen corto del motor SMC (capital aparte)
+  const smcStats = smcEngine.getFullStats();
+  console.log(
+    `${c.gray}  [SMC] Equity: $${fmt(smcEngine.totalEquity)} (${fmtP(smcEngine.totalReturn)}) · ` +
+    `Trades: ${smcStats.totalTrades} (Win: ${smcStats.winRate}%) · ` +
+    `Posiciones: ${smcEngine.positions.length} · Auto-trade: ${smcEngine.autoTrade ? "ON" : "OFF"}${c.reset}`
+  );
+  server.broadcast("smc_status", smcEngine.getState());
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -289,6 +392,7 @@ async function main() {
 
   // 2. Cargar historial inicial de velas para tener señales desde el arranque
   await refreshCandleHistory();
+  await refreshOHLCHistory();
 
   // 3. Primer fetch de precios, funding, order book y sentimiento
   await fetchPrices();
@@ -298,6 +402,7 @@ async function main() {
 
   // 4. Primera evaluación de señales
   evaluateSignals();
+  evaluateSMCSignals();
 
   // 5. Loops periódicos
   setInterval(fetchPrices,             config.priceInterval);
@@ -305,8 +410,10 @@ async function main() {
   setInterval(fetchOrderBook,          config.orderBookInterval);
   setInterval(fetchSentiment,          config.sentimentInterval);
   setInterval(evaluateSignals,         config.signalInterval);
+  setInterval(evaluateSMCSignals,      config.signalInterval);
   setInterval(logStatus,               config.logInterval);
   setInterval(() => refreshCandleHistory(true), config.candleRefreshInterval);
+  setInterval(() => refreshOHLCHistory(true), config.smc.candleRefreshInterval);
 
   // Log inicial de estado
   logStatus();
