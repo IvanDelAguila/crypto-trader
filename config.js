@@ -96,16 +96,20 @@ const config = {
     maxOpenPositions:    4,
     breakevenTriggerPct: 0.35,
     autoTrade:           process.env.SMC_AUTO_TRADE === "true",
-    candleRefreshInterval: 5 * 60000, // refrescar velas OHLC cada 5min
+    candleRefreshInterval:    5 * 60000,  // refrescar velas OHLC (15m) cada 5min
+    htfInterval:              "1h",       // temporalidad mayor para el sesgo de estructura
+    htfCandleRefreshInterval: 15 * 60000, // refrescar velas HTF cada 15min
     strategy: {
-      enabled:           true,
-      swingWindow:       3,      // velas a cada lado para considerar un swing high/low
-      impulsePct:        0.015,  // % mínimo de cuerpo de vela para contar como "impulso" al armar el order block
+      enabled:            true,
+      swingWindow:        3,      // velas a cada lado para considerar un swing high/low
+      impulsePct:         0.015,  // % mínimo de cuerpo de vela para contar como "impulso" al armar el order block
       sweepRecency:       1,      // el liquidity sweep debe estar a lo sumo a N velas del final
-      confirmImpulsePct: 0.004,  // % mínimo de cuerpo en la vela de confirmación tras el sweep
-      slBufferPct:       0.002,  // colchón extra del SL debajo/encima del nivel barrido
-      rrRatio:           2,       // TP = riesgo (entrada-SL) × este ratio
-      minCandles:        40,
+      confirmImpulsePct:  0.004,  // % mínimo de cuerpo en la vela de confirmación tras el sweep
+      slBufferPct:        0.002,  // colchón extra del SL debajo/encima del nivel barrido
+      rrRatio:            2,       // TP = riesgo (entrada-SL) × este ratio
+      minCandles:         40,
+      htfMinCandles:      20,      // mínimo de velas HTF para calcular el sesgo (si no, se trata como neutral)
+      equalTolerancePct:  0.0015,  // tolerancia entre swings para considerarlos "equal high/low"
     },
   },
 };
