@@ -43,7 +43,8 @@ const dataStore = {
   changes:      {},
   fundingRates: {},
   priceHistory: {},   // { SYMBOL: [price, price, ...] }  máx 200 velas
-  ohlcHistory:  {},   // { SYMBOL: [{open,high,low,close}, ...] } — solo para el motor SMC
+  ohlcHistory:  {},   // { SYMBOL: [{open,high,low,close}, ...] } — velas 15m, solo para el motor SMC
+  ohlcHistoryHTF: {}, // { SYMBOL: [...] } — velas 1h, para el sesgo multi-timeframe del motor SMC
   orderBook:    {},   // { SYMBOL: -1..1 } desbalance compra/venta
   sentiment:    null, // { value, classification, updated }
   lastUpdate:   null,
@@ -89,7 +90,7 @@ ${c.cyan}${c.bright}╔═══════════════════
 
   ${c.magenta}Motor de prueba SMC${c.reset} (capital aparte, no afecta al de arriba):
   Capital inicial : ${c.green}$${config.smc.initialCapital}${c.reset}
-  Estrategia      : ${c.gray}Order Blocks + Liquidity Sweep${c.reset}
+  Estrategia      : ${c.gray}Liquidity Sweep + OB + FVG + BOS/CHoCH + Premium/Discount + HTF${c.reset}
   Auto-trade      : ${smcEngine.autoTrade ? c.green + "ON" : c.red + "OFF"}${c.reset}
 
 `);
@@ -217,13 +218,29 @@ async function refreshOHLCHistory(quiet = true) {
   if (!quiet) log.info(`[SMC] Historial OHLC cargado (${loaded}/${config.symbols.length} símbolos)`);
 }
 
+// ── Cargar / refrescar velas del timeframe mayor (sesgo multi-timeframe) ─────
+async function refreshHTFHistory(quiet = true) {
+  let loaded = 0;
+  for (const symbol of config.symbols) {
+    try {
+      dataStore.ohlcHistoryHTF[symbol] = await binance.getKlinesOHLC(symbol, config.smc.htfInterval, 100);
+      loaded++;
+      await new Promise(r => setTimeout(r, 300));
+    } catch (err) {
+      log.warn(`[SMC] No se pudo cargar HTF (${config.smc.htfInterval}) de ${symbol}: ${err.message}`);
+    }
+  }
+  if (!quiet) log.info(`[SMC] Historial HTF cargado (${loaded}/${config.symbols.length} símbolos)`);
+}
+
 // ── Evaluar señales del motor SMC ─────────────────────────────────────────────
 function evaluateSMCSignals() {
   let newSignals = 0;
 
   for (const symbol of config.symbols) {
     const candles = dataStore.ohlcHistory[symbol] || [];
-    const signal = evalSMC(symbol, candles);
+    const htfCandles = dataStore.ohlcHistoryHTF[symbol] || [];
+    const signal = evalSMC(symbol, candles, htfCandles);
     if (!signal) continue;
 
     applyMarketContext(signal, symbol); // reutiliza el mismo ajuste de order book/sentimiento
@@ -393,6 +410,7 @@ async function main() {
   // 2. Cargar historial inicial de velas para tener señales desde el arranque
   await refreshCandleHistory();
   await refreshOHLCHistory();
+  await refreshHTFHistory();
 
   // 3. Primer fetch de precios, funding, order book y sentimiento
   await fetchPrices();
@@ -414,6 +432,7 @@ async function main() {
   setInterval(logStatus,               config.logInterval);
   setInterval(() => refreshCandleHistory(true), config.candleRefreshInterval);
   setInterval(() => refreshOHLCHistory(true), config.smc.candleRefreshInterval);
+  setInterval(() => refreshHTFHistory(true), config.smc.htfCandleRefreshInterval);
 
   // Log inicial de estado
   logStatus();
