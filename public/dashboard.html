@@ -151,6 +151,12 @@
     </section>
 
     <section>
+      <h2>Señales recientes (SMC)</h2>
+      <div id="smcSignals" class="empty">Sin datos aún</div>
+      <div class="sub" style="margin-top:6px;">Se muestren o no en trades, estas son todas las señales que la estrategia detectó (sweep + confirmación). Solo se ejecutan si el auto-trade está en ON y la confianza supera el umbral.</div>
+    </section>
+
+    <section>
       <h2>Últimos trades (SMC)</h2>
       <div id="smcTradesList" class="empty">Sin datos aún</div>
     </section>
@@ -301,11 +307,12 @@ async function resumeTrading(){
 
 async function refreshSmc(){
   try{
-    const [health, stats, positions, trades] = await Promise.all([
+    const [health, stats, positions, trades, signals] = await Promise.all([
       fetch('/api/smc/health').then(r=>r.json()),
       fetch('/api/smc/stats').then(r=>r.json()),
       fetch('/api/smc/positions').then(r=>r.json()),
       fetch('/api/smc/trades').then(r=>r.json()),
+      fetch('/api/smc/signals').then(r=>r.json()),
     ]);
 
     document.getElementById('smcEquity').textContent = '$' + fmt(stats.totalEquity);
@@ -333,6 +340,20 @@ async function refreshSmc(){
           </div>
           <div class="sub">entry $${fmt(p.entryPrice,4)} → now $${fmt(p.currentPrice ?? p.entryPrice,4)} · SL $${fmt(p.sl,4)}</div>
           <div class="sub">capital asignado: $${fmt(p.allocation)} · ${esc(p.reason || '')}</div>
+        </div>
+      `).join('');
+
+    const sigDiv = document.getElementById('smcSignals');
+    sigDiv.innerHTML = !signals.length
+      ? '<div class="empty">Sin señales detectadas aún</div>'
+      : signals.slice(0, 15).map(s => `
+        <div class="card item">
+          <div class="row" style="margin-bottom:0;">
+            <strong>${esc(s.symbol)} ${s.type === 'LONG' ? '🟢 LONG' : '🔴 SHORT'}</strong>
+            <span>${s.confidence.toFixed(0)}%</span>
+          </div>
+          <div class="sub">${esc(s.reason)}</div>
+          <div class="sub">${new Date(s.timestamp).toLocaleTimeString()}</div>
         </div>
       `).join('');
 
